@@ -1,0 +1,23 @@
+[default.general]
+chip = "esp32s3"
+log_level = "INFO"
+
+[default.probe]
+# Leave unset to use the first compatible probe. Set this locally if you have
+# multiple probes connected.
+# usb_vid = "303a"
+# usb_pid = "1001"
+
+[default.flashing]
+enabled = true
+restore_unwritten_bytes = false
+
+[default.reset]
+enabled = true
+halt_afterwards = false
+
+[default.rtt]
+enabled = false
+
+[default.gdb]
+enabled = false

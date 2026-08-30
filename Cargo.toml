@@ -1,0 +1,45 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core-s3",
+    "examples/hello_world",
+    "examples/dirty_regions",
+    "examples/gateway_h2",
+    "xtask",
+]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+rust-version = "1.88"
+authors = ["Anapeksha Mukherjee <https://github.com/anapeksha>"]
+repository = "https://github.com/anapeksha/core-s3-rs"
+homepage = "https://github.com/anapeksha/core-s3-rs"
+documentation = "https://docs.rs/core-s3"
+readme = "README.md"
+keywords = ["esp32s3", "embedded", "m5stack", "cores3", "no-std"]
+categories = ["embedded", "hardware-support", "no-std"]
+
+[workspace.dependencies]
+core-s3 = { path = "crates/core-s3", version = "0.1.0" }
+critical-section = "1.2.0"
+defmt = "1.0.1"
+embedded-graphics = { version = "0.8.2", default-features = false }
+embedded-hal = { version = "1.0.0", default-features = false }
+embedded-hal-async = { version = "1.0.0", default-features = false }
+embedded-hal-bus = { version = "0.3.0", default-features = false }
+esp-alloc = { version = "0.10.0", default-features = true, features = ["esp32s3"] }
+esp-backtrace = { version = "0.19.0", default-features = false, features = ["esp32s3", "panic-handler", "println"] }
+esp-bootloader-esp-idf = { version = "0.5.0", default-features = false, features = ["esp32s3"] }
+esp-hal = { version = "~1.1.1", default-features = false, features = ["esp32s3", "rt", "unstable"] }
+esp-println = { version = "0.17.0", default-features = false, features = ["esp32s3", "jtag-serial"] }
+heapless = { version = "0.9.3", default-features = false }
+static_cell = "2.1.1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(core_s3_host_tests)'] }
+
+[workspace.lints.clippy]
+large_stack_frames = "deny"
+mem_forget = "deny"

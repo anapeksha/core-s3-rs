@@ -1,0 +1,8 @@
+/target/
+/.embuild/
+/.vscode/
+.DS_Store
+*.log
+*.bin
+*.elf
+*.uf2

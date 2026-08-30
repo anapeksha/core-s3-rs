@@ -1,0 +1,4 @@
+[toolchain]
+channel = "esp"
+components = ["rustfmt", "clippy", "rust-src"]
+targets = ["xtensa-esp32s3-none-elf"]
