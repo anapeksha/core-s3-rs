@@ -1,0 +1,36 @@
+name: Firmware release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ESP Rust toolchain
+        uses: esp-rs/xtensa-toolchain@v1.6
+        with:
+          default: true
+          buildtargets: esp32s3
+          ldproxy: false
+      - name: Install flashing tooling
+        run: cargo install cargo-embed --locked
+      - name: Build release firmware
+        run: cargo xtask firmware --release
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-s3-firmware
+          path: target/firmware/*
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/firmware/*
+          generate_release_notes: true

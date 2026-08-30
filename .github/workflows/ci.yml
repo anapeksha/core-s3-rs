@@ -1,0 +1,29 @@
+name: PR validation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ESP Rust toolchain
+        uses: esp-rs/xtensa-toolchain@v1.6
+        with:
+          default: true
+          buildtargets: esp32s3
+          ldproxy: false
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Check BSP on host for tests/docs
+        run: cargo test -p core-s3 --target x86_64-unknown-linux-gnu
+      - name: Check workspace firmware
+        run: cargo check --workspace --all-features --target xtensa-esp32s3-none-elf
+      - name: Clippy
+        run: cargo clippy --workspace --all-features --target xtensa-esp32s3-none-elf -- -D warnings
