@@ -1,9 +1,9 @@
 [alias]
 xtask = "run -p xtask --"
-flash = "embed --chip esp32s3"
+flash = "embed --chip esp32s3 --target xtensa-esp32s3-none-elf"
 
-[build]
-target = "xtensa-esp32s3-none-elf"
+[unstable]
+build-std = ["core"]
 
 [target.xtensa-esp32s3-none-elf]
 rustflags = [

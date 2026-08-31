@@ -58,18 +58,18 @@ For RAM-sensitive UI, prefer smaller per-widget sprites and compose them into th
 Install the ESP Rust toolchain with [`espup`](https://github.com/esp-rs/espup), then:
 
 ```sh
-cargo check --workspace --all-features
-cargo build -p hello_world --release
-cargo build -p dirty_regions --release
-cargo build -p gateway_h2 --release --features gateway-h2
+cargo +esp check --workspace --exclude xtask --all-features --target xtensa-esp32s3-none-elf
+cargo +esp build -p hello_world --release --target xtensa-esp32s3-none-elf
+cargo +esp build -p dirty_regions --release --target xtensa-esp32s3-none-elf
+cargo +esp build -p gateway_h2 --release --features gateway-h2 --target xtensa-esp32s3-none-elf
 ```
 
 Flash an example with `cargo-embed`:
 
 ```sh
-cargo embed --package hello_world --release
+cargo +esp embed --package hello_world --release --target xtensa-esp32s3-none-elf
 # or, through the workspace alias:
-cargo flash --package hello_world --release
+cargo +esp flash --package hello_world --release
 ```
 
 `Embed.toml` is configured for the ESP32-S3 target and probe-rs flashing. If you have more than one compatible probe connected, set the probe VID/PID locally in `Embed.toml`.
