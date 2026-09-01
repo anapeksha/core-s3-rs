@@ -87,30 +87,31 @@ fn main() -> ! {
 
     let style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
     let accent = MonoTextStyle::new(&FONT_6X10, Rgb565::CYAN);
+    let error_style = MonoTextStyle::new(&FONT_6X10, Rgb565::RED);
+    let status_line = Rectangle::new(Point::new(24, 132), Size::new(260, 18));
     let mut last_point = None;
+    let mut last_state = TouchDisplayState::Waiting;
+
+    draw_status_line(display, status_line, "waiting for touch...", style);
 
     loop {
         delay.delay(Duration::from_millis(40));
 
-        Rectangle::new(Point::new(24, 126), Size::new(260, 78))
-            .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
-            .draw(display)
-            .expect("clear status area");
-
         match touch.read_report() {
             Ok(report) => {
                 if let Some(event) = report.events.into_iter().flatten().next() {
-                    if let Some(old) = last_point {
-                        Circle::new(old - Point::new(5, 5), 10)
-                            .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
-                            .draw(display)
-                            .expect("erase old marker");
+                    if let Some(old) = last_point
+                        && old != event.point
+                    {
+                        erase_marker(display, old);
                     }
-                    last_point = Some(event.point);
-                    Circle::new(event.point - Point::new(5, 5), 10)
-                        .into_styled(PrimitiveStyle::with_fill(Rgb565::YELLOW))
-                        .draw(display)
-                        .expect("draw marker");
+
+                    let next_state = TouchDisplayState::Touch {
+                        phase: event.phase,
+                        id: event.id,
+                        x: event.point.x,
+                        y: event.point.y,
+                    };
 
                     let mut line: String<64> = String::new();
                     let phase = match event.phase {
@@ -124,24 +125,86 @@ fn main() -> ! {
                         phase, event.id, event.point.x, event.point.y
                     )
                     .unwrap();
-                    Text::new(&line, Point::new(24, 144), accent)
-                        .draw(display)
-                        .expect("touch line");
-                } else {
-                    Text::new("waiting for touch...", Point::new(24, 144), style)
-                        .draw(display)
-                        .expect("waiting");
+
+                    if next_state != last_state {
+                        draw_status_line(display, status_line, &line, accent);
+                        last_state = next_state;
+                    }
+
+                    if matches!(event.phase, TouchPhase::Up) {
+                        erase_marker(display, event.point);
+                        last_point = None;
+                    } else {
+                        draw_marker(display, event.point);
+                        last_point = Some(event.point);
+                    }
+                } else if last_state != TouchDisplayState::Waiting {
+                    if let Some(old) = last_point {
+                        erase_marker(display, old);
+                        last_point = None;
+                    }
+                    draw_status_line(display, status_line, "waiting for touch...", style);
+                    last_state = TouchDisplayState::Waiting;
                 }
             }
             Err(_) => {
-                Text::new(
-                    "touch read failed",
-                    Point::new(24, 144),
-                    MonoTextStyle::new(&FONT_6X10, Rgb565::RED),
-                )
-                .draw(display)
-                .expect("read failed");
+                if last_state != TouchDisplayState::ReadFailed {
+                    if let Some(old) = last_point {
+                        erase_marker(display, old);
+                        last_point = None;
+                    }
+                    draw_status_line(display, status_line, "touch read failed", error_style);
+                    last_state = TouchDisplayState::ReadFailed;
+                }
             }
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TouchDisplayState {
+    Waiting,
+    ReadFailed,
+    Touch {
+        phase: TouchPhase,
+        id: u8,
+        x: i32,
+        y: i32,
+    },
+}
+
+fn draw_status_line<T>(
+    display: &mut T,
+    area: Rectangle,
+    text: &str,
+    style: MonoTextStyle<'_, Rgb565>,
+) where
+    T: DrawTarget<Color = Rgb565>,
+{
+    area.into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+        .draw(display)
+        .ok();
+    Text::new(text, area.top_left + Point::new(0, 12), style)
+        .draw(display)
+        .ok();
+}
+
+fn draw_marker<T>(display: &mut T, point: Point)
+where
+    T: DrawTarget<Color = Rgb565>,
+{
+    Circle::new(point - Point::new(5, 5), 10)
+        .into_styled(PrimitiveStyle::with_fill(Rgb565::YELLOW))
+        .draw(display)
+        .ok();
+}
+
+fn erase_marker<T>(display: &mut T, point: Point)
+where
+    T: DrawTarget<Color = Rgb565>,
+{
+    Circle::new(point - Point::new(6, 6), 12)
+        .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+        .draw(display)
+        .ok();
 }
