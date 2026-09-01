@@ -1,5 +1,5 @@
 #![no_std]
-#![doc = include_str!("../../../README.md")]
+#![doc = include_str!("../README.md")]
 
 //! Typed board metadata and small reusable drivers for the M5Stack CoreS3.
 //!
