@@ -17,6 +17,7 @@ use esp_hal::{
         master::{Config as SpiConfig, Spi},
     },
     time::Rate,
+    uart::{Config as UartConfig, Uart},
 };
 
 use crate::{
@@ -28,6 +29,8 @@ use crate::{
 pub const DISPLAY_SPI_WRITE_HZ: u32 = 40_000_000;
 /// CoreS3 internal I2C frequency.
 pub const INTERNAL_I2C_HZ: u32 = 400_000;
+/// Default CoreS3-to-Gateway-H2 UART baud rate.
+pub const GATEWAY_H2_UART_BAUD: u32 = 115_200;
 
 const AXP_LDOS_ON_OFF: u8 = 0x90;
 const AXP_ALDO3_VOLTAGE: u8 = 0x94;
@@ -53,6 +56,8 @@ pub type CoreS3Output = Output<'static>;
 pub type CoreS3LcdSpiDevice = spi::ExclusiveDevice<CoreS3RawSpi, CoreS3Output, Delay>;
 /// Concrete display type returned by [`CoreS3::init_display`].
 pub type CoreS3Display = Display<CoreS3LcdSpiDevice, CoreS3Output, CoreS3Output>;
+/// Concrete blocking UART used for the Gateway H2 host link.
+pub type CoreS3GatewayH2Uart = Uart<'static, Blocking>;
 
 /// ESP-HAL resources required to initialize the CoreS3 LCD.
 pub struct CoreS3DisplayResources {
@@ -75,6 +80,21 @@ pub struct CoreS3DisplayParts {
     pub internal_i2c: CoreS3I2c,
 }
 
+/// ESP-HAL resources required to initialize the Gateway H2 UART link.
+pub struct CoreS3GatewayH2Resources {
+    pub uart1: esp_hal::peripherals::UART1<'static>,
+    /// CoreS3 Grove Port A pin 1, used as host UART TX.
+    pub tx: esp_hal::peripherals::GPIO1<'static>,
+    /// CoreS3 Grove Port A pin 2, used as host UART RX.
+    pub rx: esp_hal::peripherals::GPIO2<'static>,
+}
+
+/// Initialized Gateway H2 host UART link.
+pub struct CoreS3GatewayH2Parts {
+    pub uart: CoreS3GatewayH2Uart,
+    pub baud: u32,
+}
+
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BoardInitError {
@@ -82,6 +102,7 @@ pub enum BoardInitError {
     Spi,
     Power,
     Display,
+    Uart,
 }
 
 impl CoreS3 {
@@ -125,6 +146,25 @@ impl CoreS3 {
         Ok(CoreS3DisplayParts {
             display,
             internal_i2c: i2c,
+        })
+    }
+
+    /// Initializes only the Gateway H2 host UART link on Grove Port A and leaves
+    /// all unrelated ESP peripherals untouched.
+    pub fn init_gateway_h2(
+        resources: CoreS3GatewayH2Resources,
+    ) -> Result<CoreS3GatewayH2Parts, BoardInitError> {
+        let uart = Uart::new(
+            resources.uart1,
+            UartConfig::default().with_baudrate(GATEWAY_H2_UART_BAUD),
+        )
+        .map_err(|_| BoardInitError::Uart)?
+        .with_tx(resources.tx)
+        .with_rx(resources.rx);
+
+        Ok(CoreS3GatewayH2Parts {
+            uart,
+            baud: GATEWAY_H2_UART_BAUD,
         })
     }
 }

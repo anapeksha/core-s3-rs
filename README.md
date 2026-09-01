@@ -1,13 +1,13 @@
 # core-s3
 
-Rust board support package for the **M5Stack CoreS3 K128** (ESP32-S3) with optional support for a stacked **M5Stack Zigbee Gateway H2**.
+Rust board support package for the **M5Stack CoreS3 K128** (ESP32-S3) with optional support for an **M5Stack Gateway H2** Thread/Zigbee co-processor.
 
 The crate is intentionally `#![no_std]` and keeps the reusable BSP layer small:
 
 - board metadata and pin/device maps for CoreS3 peripherals
 - display constants and a dirty-region sprite framebuffer for efficient partial repainting
 - power/battery status types ready for AXP2101 integration
-- feature-gated Gateway H2 metadata behind `gateway-h2`
+- feature-gated Gateway H2 metadata and UART bring-up behind `gateway-h2`
 - example firmware crates and CI/release automation
 
 > Hardware note: pin maps are scaffolded from the supplied CoreS3 materials and should be validated on the exact CoreS3/base stack revision before relying on every peripheral in production.
@@ -19,20 +19,20 @@ crates/core-s3/          no_std BSP crate
 examples/hello_world/   minimal ESP32-S3 firmware skeleton
 examples/dirty_regions/ display sprite example
 examples/dual_core/     PRO CPU + APP CPU example
-examples/gateway_h2/    Zigbee Gateway H2 feature-gated example
+examples/gateway_h2/    Gateway H2 UART + Matter/Thread scaffold example
 .github/workflows/      PR validation and firmware release
 ```
 
 ## Features
 
-| Feature      | Description                                                                                         |
-| ------------ | --------------------------------------------------------------------------------------------------- |
-| `defmt`      | Enables `defmt` formatting for supported dependencies.                                              |
-| `gateway-h2` | Exposes `core_s3::gateway_h2`, Gateway H2 metadata, and `rs-matter` Matter-over-Thread setup types. |
+| Feature      | Description                                                                                                            |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `defmt`      | Enables `defmt` formatting for supported dependencies.                                                                 |
+| `gateway-h2` | Exposes `core_s3::gateway_h2`, Gateway H2 metadata, BSP UART bring-up, and `rs-matter` Matter-over-Thread setup types. |
 
 ## Display dirty-region sprite
 
-`core_s3::display::DirtySprite` stores an off-screen framebuffer and tracks only changed rectangles. Drawing through `embedded-graphics` marks dirty regions automatically; `flush_dirty` then repaints only those pixels into the real display target.
+`core_s3::display::DirtySprite` stores an off-screen framebuffer and tracks only changed rectangles. Drawing through `embedded-graphics` marks dirty regions automatically; `flush_dirty` / `flush_dirty_at` then blit only final pixels for the changed regions into the real display target, avoiding visible clear-then-redraw flashes.
 
 ```rust
 use core_s3::display::DirtySprite;
@@ -77,7 +77,11 @@ cargo +esp flash --package hello_world --release
 
 ## Matter over Thread with Gateway H2
 
-Enable `gateway-h2` to use the Gateway H2 metadata and Matter-over-Thread setup types. The BSP re-exports `rs-matter` as `core_s3::gateway_h2::matter::stack` so firmware crates can instantiate the concrete Matter server while keeping regular CoreS3 builds free of Matter dependencies.
+Enable `gateway-h2` to use Gateway H2 metadata, the crate-owned CoreS3-to-H2 UART bring-up helper, and Matter-over-Thread setup types. The BSP re-exports `rs-matter` as `core_s3::gateway_h2::matter::stack` so firmware crates can instantiate the concrete Matter server while keeping regular CoreS3 builds free of Matter dependencies.
+
+Gateway H2 firmware is commonly OpenThread RCP/Spinel, OpenThread CLI, or a standalone Thread/Zigbee application depending on what is flashed to the ESP32-H2. It is not assumed to be an AT-command modem. The BSP initializes the host UART transport; consumer firmware is responsible for the concrete H2 protocol driver, Thread joining/commissioning flow, Matter endpoints, and Home Assistant behavior.
+
+For Home Assistant validation, a Raspberry Pi 5 running Home Assistant OS also needs a Thread Border Router/radio, such as Home Assistant Connect ZBT-1/SkyConnect or another supported OpenThread Border Router. This crate can provide the CoreS3 device side, but Home Assistant will only discover it once consumer firmware runs a real Matter server over a Thread network visible to Home Assistant.
 
 ```toml
 [dependencies]

@@ -5,7 +5,7 @@ use core::fmt::Write;
 
 use core_s3::{
     CoreS3,
-    bsp::CoreS3DisplayResources,
+    bsp::{CoreS3DisplayResources, CoreS3GatewayH2Resources},
     gateway_h2::{
         GatewayH2,
         matter::{MatterOverThreadConfig, MatterServerConfig, ThreadDatasetConfig},
@@ -19,6 +19,7 @@ use embedded_graphics::{
     text::Text,
 };
 use esp_backtrace as _;
+use esp_hal::time::Duration;
 use heapless::String;
 
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -45,7 +46,7 @@ fn main() -> ! {
         setup.matter.port
     );
 
-    let mut parts = CoreS3::init_display(CoreS3DisplayResources {
+    let mut display_parts = CoreS3::init_display(CoreS3DisplayResources {
         i2c0: peripherals.I2C0,
         i2c_sda: peripherals.GPIO12,
         i2c_scl: peripherals.GPIO11,
@@ -58,80 +59,129 @@ fn main() -> ! {
     })
     .expect("initialize CoreS3 display");
 
-    parts
+    let mut gateway_parts = CoreS3::init_gateway_h2(CoreS3GatewayH2Resources {
+        uart1: peripherals.UART1,
+        tx: peripherals.GPIO1,
+        rx: peripherals.GPIO2,
+    })
+    .expect("initialize Gateway H2 UART");
+
+    let uart_probe = probe_gateway_h2_uart(&mut gateway_parts.uart);
+
+    display_parts
         .display
         .draw_validation_screen(
             "GATEWAY H2",
-            "Matter-over-Thread config scaffold",
+            "BSP UART link + Matter config scaffold",
             Rgb565::GREEN,
         )
         .expect("draw validation screen");
 
     Rectangle::new(Point::new(18, 78), Size::new(284, 122))
         .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
-        .draw(&mut parts.display)
+        .draw(&mut display_parts.display)
         .expect("clear config area");
 
     let style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
     let accent = MonoTextStyle::new(&FONT_6X10, Rgb565::GREEN);
 
     Text::new("Gateway H2 host link", Point::new(30, 94), accent)
-        .draw(&mut parts.display)
+        .draw(&mut display_parts.display)
         .expect("draw heading");
 
-    let mut uart: String<48> = String::new();
+    let mut uart: String<64> = String::new();
     write!(
         &mut uart,
-        "UART: TX GPIO{} / RX GPIO{}",
-        setup.gateway.host_uart.tx.0, setup.gateway.host_uart.rx.0
+        "UART1 {} baud TX{} RX{}",
+        gateway_parts.baud, setup.gateway.host_uart.tx.0, setup.gateway.host_uart.rx.0
     )
     .unwrap();
     Text::new(&uart, Point::new(30, 112), style)
-        .draw(&mut parts.display)
+        .draw(&mut display_parts.display)
         .expect("draw uart");
+
+    let mut probe: String<64> = String::new();
+    match uart_probe {
+        UartProbe::Response { bytes } => {
+            write!(&mut probe, "Probe: {} byte response", bytes).unwrap();
+        }
+        UartProbe::NoResponse => {
+            probe.push_str("UART OK; no CLI/AT reply").unwrap();
+        }
+        UartProbe::WriteFailed => {
+            probe.push_str("Probe: UART write failed").unwrap();
+        }
+        UartProbe::ReadFailed => {
+            probe.push_str("Probe: UART read failed").unwrap();
+        }
+    }
+    Text::new(&probe, Point::new(30, 130), accent)
+        .draw(&mut display_parts.display)
+        .expect("draw uart probe");
 
     let mut matter_ids: String<64> = String::new();
     write!(
         &mut matter_ids,
-        "Matter VID:PID {:04X}:{:04X}",
-        setup.matter.vendor_id, setup.matter.product_id
+        "Matter {:04X}:{:04X} port {}",
+        setup.matter.vendor_id, setup.matter.product_id, setup.matter.port
     )
     .unwrap();
-    Text::new(&matter_ids, Point::new(30, 130), style)
-        .draw(&mut parts.display)
+    Text::new(&matter_ids, Point::new(30, 148), style)
+        .draw(&mut display_parts.display)
         .expect("draw matter ids");
 
     let mut pairing: String<64> = String::new();
     write!(
         &mut pairing,
-        "Port {}  PIN {}",
-        setup.matter.port, setup.matter.setup_passcode
+        "Disc {} PIN {}",
+        setup.matter.discriminator, setup.matter.setup_passcode
     )
     .unwrap();
-    Text::new(&pairing, Point::new(30, 148), style)
-        .draw(&mut parts.display)
+    Text::new(&pairing, Point::new(30, 166), style)
+        .draw(&mut display_parts.display)
         .expect("draw pairing");
 
     let mut thread_line: String<64> = String::new();
     write!(
         &mut thread_line,
-        "Thread '{}' ch {} pan {:04X}",
-        setup.thread.network_name, setup.thread.channel, setup.thread.pan_id
+        "Thread '{}' ch {}",
+        setup.thread.network_name, setup.thread.channel
     )
     .unwrap();
-    Text::new(&thread_line, Point::new(30, 166), style)
-        .draw(&mut parts.display)
+    Text::new(&thread_line, Point::new(30, 184), style)
+        .draw(&mut display_parts.display)
         .expect("draw thread config");
-
-    Text::new(
-        "Feature-gated behind gateway-h2",
-        Point::new(30, 188),
-        accent,
-    )
-    .draw(&mut parts.display)
-    .expect("draw feature gate");
 
     loop {
         core::hint::spin_loop();
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UartProbe {
+    Response { bytes: usize },
+    NoResponse,
+    WriteFailed,
+    ReadFailed,
+}
+
+fn probe_gateway_h2_uart(uart: &mut core_s3::bsp::CoreS3GatewayH2Uart) -> UartProbe {
+    let delay = esp_hal::delay::Delay::new();
+
+    // This is intentionally a soft probe only. Gateway H2 firmware is commonly
+    // OpenThread RCP/Spinel or a standalone Thread application, not AT-command
+    // firmware. A response here proves an interactive CLI/AT-style firmware; no
+    // response still leaves the UART transport initialized for a real driver.
+    if uart.write(b"state\r\n").is_err() || uart.flush().is_err() {
+        return UartProbe::WriteFailed;
+    }
+
+    delay.delay(Duration::from_millis(250));
+
+    let mut buffer = [0u8; 64];
+    match uart.read_buffered(&mut buffer) {
+        Ok(0) => UartProbe::NoResponse,
+        Ok(bytes) => UartProbe::Response { bytes },
+        Err(_) => UartProbe::ReadFailed,
     }
 }

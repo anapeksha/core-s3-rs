@@ -2,12 +2,12 @@ pub mod matter;
 
 use crate::pins::{Gpio, GrovePortPins};
 
-/// Feature-gated support metadata for an M5Stack Zigbee Gateway H2 stack.
+/// Feature-gated support metadata for an M5Stack Gateway H2 stack.
 ///
-/// Enable with `--features gateway-h2`. The board presents the ESP32-H2 module
-/// to CoreS3 firmware as an external co-processor; high-level protocol drivers
-/// can build on top of this pin/bus description without making all users pay for
-/// Zigbee-related code.
+/// Enable with `--features gateway-h2`. Gateway H2 is an ESP32-H2
+/// IEEE 802.15.4 co-processor/device. Depending on the firmware flashed to the
+/// H2 it may expose an OpenThread CLI, an OpenThread RCP/Spinel transport, or a
+/// standalone application; it is not assumed to be an AT-command modem.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GatewayH2 {
     pub host_uart: UartPins,
