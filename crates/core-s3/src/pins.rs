@@ -1,4 +1,5 @@
 /// ESP32-S3 GPIO number.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Gpio(pub u8);
 
@@ -37,6 +38,25 @@ impl SpiDisplayPins {
         cs: Gpio(3),
         reset: None,
         backlight: None,
+    };
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SpiSdPins {
+    pub sclk: Gpio,
+    pub mosi: Gpio,
+    pub miso: Gpio,
+    pub cs: Gpio,
+}
+
+impl SpiSdPins {
+    /// TF/microSD socket on the shared LCD SPI signal group.
+    pub const TF_CARD: Self = Self {
+        sclk: Gpio(36),
+        mosi: Gpio(37),
+        miso: Gpio(35),
+        cs: Gpio(4),
     };
 }
 

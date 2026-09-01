@@ -17,6 +17,7 @@ pub mod motion;
 pub mod pins;
 pub mod power;
 pub mod rtc;
+pub mod sd;
 pub mod touch;
 pub mod ui;
 
