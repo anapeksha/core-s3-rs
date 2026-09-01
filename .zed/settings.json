@@ -4,11 +4,13 @@
       "initialization_options": {
         "cargo": {
           "target": "xtensa-esp32s3-none-elf",
-          "features": "all"
+          "features": "all",
+          "allTargets": false
         },
         "check": {
           "command": "check",
-          "targets": ["xtensa-esp32s3-none-elf"]
+          "targets": ["xtensa-esp32s3-none-elf"],
+          "allTargets": false
         },
         "rustfmt": {
           "overrideCommand": [
