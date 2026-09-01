@@ -8,6 +8,9 @@ use embedded_hal::{delay::DelayNs, i2c::I2c};
 
 use crate::devices;
 
+#[path = "motion/bmi270_config.rs"]
+mod bmi270_config;
+
 const BMI270_CHIP_ID: u8 = 0x00;
 const BMI270_ACC_DATA: u8 = 0x0C;
 const BMI270_GYR_DATA: u8 = 0x12;
@@ -15,6 +18,11 @@ const BMI270_ACC_CONF: u8 = 0x40;
 const BMI270_ACC_RANGE: u8 = 0x41;
 const BMI270_GYR_CONF: u8 = 0x42;
 const BMI270_GYR_RANGE: u8 = 0x43;
+const BMI270_INT_STATUS_1: u8 = 0x1D;
+const BMI270_INTERNAL_STATUS: u8 = 0x21;
+const BMI270_INIT_CTRL: u8 = 0x59;
+const BMI270_INIT_ADDR_0: u8 = 0x5B;
+const BMI270_INIT_DATA: u8 = 0x5E;
 const BMI270_PWR_CONF: u8 = 0x7C;
 const BMI270_PWR_CTRL: u8 = 0x7D;
 const BMI270_CMD: u8 = 0x7E;
@@ -131,10 +139,14 @@ impl<I2C, Error> Bmi270<I2C>
 where
     I2C: I2c<Error = Error>,
 {
+    /// Initializes the BMI270 register settings that do not require a delay provider.
+    ///
+    /// CoreS3 firmware should prefer [`Self::init_with_delay`] because BMI270
+    /// requires delays while resetting and loading its mandatory configuration file.
     pub fn init(&mut self, config: Bmi270Config) -> Result<(), Error> {
         self.write_register(BMI270_PWR_CONF, 0x00)?;
-        self.write_register(BMI270_PWR_CTRL, 0x0E)?;
-        self.configure(config)
+        self.configure(config)?;
+        self.write_register(BMI270_PWR_CTRL, 0x0E)
     }
 
     pub fn init_with_delay(
@@ -146,14 +158,16 @@ where
         delay.delay_ms(2);
         self.write_register(BMI270_PWR_CONF, 0x00)?;
         delay.delay_ms(2);
+        self.upload_config(delay)?;
+        self.configure(config)?;
         self.write_register(BMI270_PWR_CTRL, 0x0E)?;
-        delay.delay_ms(10);
-        self.configure(config)
+        delay.delay_ms(20);
+        Ok(())
     }
 
     pub fn configure(&mut self, config: Bmi270Config) -> Result<(), Error> {
-        self.write_register(BMI270_ACC_CONF, sample_rate_code(config.sample_rate))?;
-        self.write_register(BMI270_GYR_CONF, sample_rate_code(config.sample_rate))?;
+        self.write_register(BMI270_ACC_CONF, accel_conf_code(config.sample_rate))?;
+        self.write_register(BMI270_GYR_CONF, gyro_conf_code(config.sample_rate))?;
         self.write_register(BMI270_ACC_RANGE, accel_range_code(config.accel_range))?;
         self.write_register(BMI270_GYR_RANGE, gyro_range_code(config.gyro_range))
     }
@@ -165,6 +179,25 @@ where
         Ok(self.chip_id()? == BMI270_EXPECTED_CHIP_ID)
     }
 
+    /// Returns the BMI270 internal status register.
+    ///
+    /// After a successful config upload the lower nibble should report `0x01`
+    /// (`init_ok`). Other values indicate that acceleration/gyro data may stay
+    /// invalid or zero.
+    pub fn internal_status(&mut self) -> Result<u8, Error> {
+        self.read_register(BMI270_INTERNAL_STATUS)
+    }
+
+    /// Returns the BMI270 interrupt/status register used to observe data-ready bits.
+    pub fn interrupt_status_1(&mut self) -> Result<u8, Error> {
+        self.read_register(BMI270_INT_STATUS_1)
+    }
+
+    /// Returns the BMI270 power-control register.
+    pub fn power_control(&mut self) -> Result<u8, Error> {
+        self.read_register(BMI270_PWR_CTRL)
+    }
+
     pub fn acceleration_raw(&mut self) -> Result<Vector3, Error> {
         let raw = self.read_vector(BMI270_ACC_DATA)?;
         Ok(raw.offset(self.accel_offset))
@@ -173,6 +206,32 @@ where
     pub fn gyroscope_raw(&mut self) -> Result<Vector3, Error> {
         let raw = self.read_vector(BMI270_GYR_DATA)?;
         Ok(raw.offset(self.gyro_offset))
+    }
+
+    fn upload_config(&mut self, delay: &mut impl DelayNs) -> Result<(), Error> {
+        self.write_register(BMI270_INIT_CTRL, 0x00)?;
+        delay.delay_ms(2);
+
+        let mut offset = 0usize;
+        while offset < bmi270_config::BMI270_CONFIG_FILE.len() {
+            let chunk_len = (bmi270_config::BMI270_CONFIG_FILE.len() - offset).min(16);
+            let word_addr = (offset / 2) as u16;
+            self.i2c.write(
+                self.address,
+                &[BMI270_INIT_ADDR_0, word_addr as u8, (word_addr >> 8) as u8],
+            )?;
+
+            let mut packet = [0u8; 17];
+            packet[0] = BMI270_INIT_DATA;
+            packet[1..1 + chunk_len]
+                .copy_from_slice(&bmi270_config::BMI270_CONFIG_FILE[offset..offset + chunk_len]);
+            self.i2c.write(self.address, &packet[..1 + chunk_len])?;
+            offset += chunk_len;
+        }
+
+        self.write_register(BMI270_INIT_CTRL, 0x01)?;
+        delay.delay_ms(20);
+        Ok(())
     }
 
     fn read_vector(&mut self, start: u8) -> Result<Vector3, Error> {
@@ -285,6 +344,14 @@ fn sample_rate_code(rate: SampleRate) -> u8 {
         SampleRate::Hz200 => 0x09,
         SampleRate::Hz400 => 0x0A,
     }
+}
+
+fn accel_conf_code(rate: SampleRate) -> u8 {
+    0xA0 | sample_rate_code(rate)
+}
+
+fn gyro_conf_code(rate: SampleRate) -> u8 {
+    0xA0 | sample_rate_code(rate)
 }
 fn accel_range_code(range: AccelRange) -> u8 {
     match range {

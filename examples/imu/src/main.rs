@@ -44,6 +44,8 @@ fn main() -> ! {
     let imu_init = imu
         .init_with_delay(Bmi270Config::DEFAULT, &mut delay)
         .is_ok();
+    let internal_status = imu.internal_status().ok();
+    let power_control = imu.power_control().ok();
 
     let display = &mut parts.display;
     let theme = Theme::DARK;
@@ -94,26 +96,51 @@ fn main() -> ! {
     .draw(display)
     .expect("init");
 
+    let mut status_line: String<64> = String::new();
+    write!(
+        &mut status_line,
+        "internal: {} pwr: {}",
+        HexByte(internal_status),
+        HexByte(power_control)
+    )
+    .unwrap();
+    Label {
+        text: &status_line,
+        top_left: Point::new(24, 124),
+        color: if internal_status.map(|s| s & 0x0F) == Some(0x01) {
+            Rgb565::CYAN
+        } else {
+            Rgb565::YELLOW
+        },
+    }
+    .draw(display)
+    .expect("status");
+
     let mut last_accel = None;
     let mut last_gyro = None;
 
     loop {
         delay.delay(Duration::from_millis(200));
+        let int_status = imu.interrupt_status_1().ok();
         let accel = imu.acceleration_raw().ok();
         let gyro = imu.gyroscope_raw().ok();
         if accel != last_accel || gyro != last_gyro {
-            draw_imu(display, accel, gyro);
+            draw_imu(display, int_status, accel, gyro);
             last_accel = accel;
             last_gyro = gyro;
         }
     }
 }
 
-fn draw_imu<T>(display: &mut T, accel: Option<Vector3>, gyro: Option<Vector3>)
-where
+fn draw_imu<T>(
+    display: &mut T,
+    int_status: Option<u8>,
+    accel: Option<Vector3>,
+    gyro: Option<Vector3>,
+) where
     T: DrawTarget<Color = Rgb565>,
 {
-    Rectangle::new(Point::new(20, 126), Size::new(274, 76))
+    Rectangle::new(Point::new(20, 142), Size::new(274, 72))
         .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
         .draw(display)
         .ok();
@@ -125,11 +152,11 @@ where
     if let Some(a) = accel {
         let mut line: String<64> = String::new();
         write!(&mut line, "acc raw x={:>6} y={:>6} z={:>6}", a.x, a.y, a.z).unwrap();
-        Text::new(&line, Point::new(24, 144), accent)
+        Text::new(&line, Point::new(24, 158), accent)
             .draw(display)
             .ok();
     } else {
-        Text::new("acc read failed", Point::new(24, 144), error)
+        Text::new("acc read failed", Point::new(24, 158), error)
             .draw(display)
             .ok();
     }
@@ -137,20 +164,29 @@ where
     if let Some(g) = gyro {
         let mut line: String<64> = String::new();
         write!(&mut line, "gyr raw x={:>6} y={:>6} z={:>6}", g.x, g.y, g.z).unwrap();
-        Text::new(&line, Point::new(24, 164), style)
+        Text::new(&line, Point::new(24, 176), style)
             .draw(display)
             .ok();
     } else {
-        Text::new("gyro read failed", Point::new(24, 164), error)
+        Text::new("gyro read failed", Point::new(24, 176), error)
             .draw(display)
             .ok();
     }
 
-    Text::new(
-        "Move/tilt CoreS3: values should change",
-        Point::new(24, 190),
-        style,
-    )
-    .draw(display)
-    .ok();
+    let mut status_line: String<32> = String::new();
+    write!(&mut status_line, "int status: {}", HexByte(int_status)).unwrap();
+    Text::new(&status_line, Point::new(24, 194), style)
+        .draw(display)
+        .ok();
+}
+
+struct HexByte(Option<u8>);
+
+impl core::fmt::Display for HexByte {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.0 {
+            Some(value) => write!(f, "0x{value:02X}"),
+            None => f.write_str("--"),
+        }
+    }
 }
