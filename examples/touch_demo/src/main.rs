@@ -1,17 +1,24 @@
 #![no_std]
 #![no_main]
 
+use core::fmt::Write;
+
 use core_s3::{
     CoreS3,
     bsp::CoreS3DisplayResources,
-    ui::{Label, ProgressBar, StatusBar, Theme},
+    touch::{Ft6336u, TouchPhase},
+    ui::{Label, StatusBar, Theme},
 };
 use embedded_graphics::{
+    mono_font::{MonoTextStyle, ascii::FONT_6X10},
     pixelcolor::Rgb565,
     prelude::*,
-    primitives::{PrimitiveStyle, Rectangle},
+    primitives::{Circle, PrimitiveStyle, Rectangle},
+    text::Text,
 };
 use esp_backtrace as _;
+use esp_hal::time::Duration;
+use heapless::String;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -31,16 +38,20 @@ fn main() -> ! {
     })
     .expect("display");
 
+    let mut touch = Ft6336u::new(parts.internal_i2c);
+    let touch_ready = touch.init().is_ok();
+    let delay = esp_hal::delay::Delay::new();
+
     let display = &mut parts.display;
     let theme = Theme::DARK;
     display.clear(Rgb565::BLACK).expect("clear");
     StatusBar {
         bounds: Rectangle::new(Point::new(0, 0), Size::new(320, 24)),
-        text: "core-s3 v0.3 hardware smoke",
+        text: "core-s3 FT6336U touch demo",
     }
     .draw(display, theme)
     .expect("status");
-    Rectangle::new(Point::new(12, 36), Size::new(296, 174))
+    Rectangle::new(Point::new(12, 36), Size::new(296, 190))
         .into_styled(PrimitiveStyle::with_stroke(Rgb565::GREEN, 2))
         .draw(display)
         .expect("border");
@@ -52,34 +63,85 @@ fn main() -> ! {
     .draw(display)
     .expect("title");
     Label {
-        text: "FT6336U touch driver",
+        text: "Touch or drag on the screen",
         top_left: Point::new(24, 88),
         color: Rgb565::WHITE,
     }
     .draw(display)
-    .expect("line1");
+    .expect("instruction");
     Label {
-        text: "Touch panel: 0x38",
+        text: if touch_ready {
+            "FT6336U init: OK"
+        } else {
+            "FT6336U init: FAILED"
+        },
         top_left: Point::new(24, 106),
-        color: Rgb565::CYAN,
+        color: if touch_ready {
+            Rgb565::CYAN
+        } else {
+            Rgb565::RED
+        },
     }
     .draw(display)
-    .expect("line2");
-    Label {
-        text: "Display-rendered verification",
-        top_left: Point::new(24, 132),
-        color: Rgb565::WHITE,
-    }
-    .draw(display)
-    .expect("line3");
-    ProgressBar {
-        bounds: Rectangle::new(Point::new(24, 162), Size::new(190, 18)),
-        value: 100,
-    }
-    .draw(display, theme)
-    .expect("progress");
+    .expect("init status");
+
+    let style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
+    let accent = MonoTextStyle::new(&FONT_6X10, Rgb565::CYAN);
+    let mut last_point = None;
 
     loop {
-        core::hint::spin_loop();
+        delay.delay(Duration::from_millis(40));
+
+        Rectangle::new(Point::new(24, 126), Size::new(260, 78))
+            .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+            .draw(display)
+            .expect("clear status area");
+
+        match touch.read_report() {
+            Ok(report) => {
+                if let Some(event) = report.events.into_iter().flatten().next() {
+                    if let Some(old) = last_point {
+                        Circle::new(old - Point::new(5, 5), 10)
+                            .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+                            .draw(display)
+                            .expect("erase old marker");
+                    }
+                    last_point = Some(event.point);
+                    Circle::new(event.point - Point::new(5, 5), 10)
+                        .into_styled(PrimitiveStyle::with_fill(Rgb565::YELLOW))
+                        .draw(display)
+                        .expect("draw marker");
+
+                    let mut line: String<64> = String::new();
+                    let phase = match event.phase {
+                        TouchPhase::Down => "down",
+                        TouchPhase::Move => "move",
+                        TouchPhase::Up => "up",
+                    };
+                    write!(
+                        &mut line,
+                        "touch {} id={} x={} y={}",
+                        phase, event.id, event.point.x, event.point.y
+                    )
+                    .unwrap();
+                    Text::new(&line, Point::new(24, 144), accent)
+                        .draw(display)
+                        .expect("touch line");
+                } else {
+                    Text::new("waiting for touch...", Point::new(24, 144), style)
+                        .draw(display)
+                        .expect("waiting");
+                }
+            }
+            Err(_) => {
+                Text::new(
+                    "touch read failed",
+                    Point::new(24, 144),
+                    MonoTextStyle::new(&FONT_6X10, Rgb565::RED),
+                )
+                .draw(display)
+                .expect("read failed");
+            }
+        }
     }
 }
