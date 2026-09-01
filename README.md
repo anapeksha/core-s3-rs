@@ -81,4 +81,4 @@ ESP32-S3 has two Xtensa LX7 cores: the PRO CPU starts `main`, and the APP CPU ca
 
 ## Release workflow
 
-Pushing a tag like `v0.1.0` runs `.github/workflows/release.yml`, builds release firmware ELF artifacts, and publishes a GitHub release containing the artifacts. Flash release artifacts with `cargo embed`/probe-rs tooling.
+Pushing a tag like `v0.1.0` runs `.github/workflows/release.yml`, builds release firmware, converts each example to an ESP32-S3 `.bin` image with `espflash save-image`, and publishes only `.bin` firmware artifacts.
