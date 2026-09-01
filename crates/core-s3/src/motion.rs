@@ -212,9 +212,10 @@ where
         self.write_register(BMI270_INIT_CTRL, 0x00)?;
         delay.delay_ms(2);
 
+        let config_file = bmi270_config::config_file();
         let mut offset = 0usize;
-        while offset < bmi270_config::BMI270_CONFIG_FILE.len() {
-            let chunk_len = (bmi270_config::BMI270_CONFIG_FILE.len() - offset).min(16);
+        while offset < config_file.len() {
+            let chunk_len = (config_file.len() - offset).min(16);
             let word_addr = (offset / 2) as u16;
             self.i2c.write(
                 self.address,
@@ -223,8 +224,7 @@ where
 
             let mut packet = [0u8; 17];
             packet[0] = BMI270_INIT_DATA;
-            packet[1..1 + chunk_len]
-                .copy_from_slice(&bmi270_config::BMI270_CONFIG_FILE[offset..offset + chunk_len]);
+            packet[1..1 + chunk_len].copy_from_slice(&config_file[offset..offset + chunk_len]);
             self.i2c.write(self.address, &packet[..1 + chunk_len])?;
             offset += chunk_len;
         }
