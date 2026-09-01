@@ -1,11 +1,4 @@
-use embedded_graphics::{
-    Pixel,
-    mono_font::{MonoTextStyle, ascii::FONT_6X10, ascii::FONT_10X20},
-    pixelcolor::Rgb565,
-    prelude::*,
-    primitives::{PrimitiveStyle, Rectangle},
-    text::{Alignment, Text},
-};
+use embedded_graphics::{Pixel, pixelcolor::Rgb565, prelude::*, primitives::Rectangle};
 use embedded_hal::{
     delay::DelayNs,
     digital::{Error as DigitalError, OutputPin},
@@ -196,6 +189,14 @@ impl<SPI, DC, SDCS> Display<SPI, DC, SDCS> {
         self.orientation = orientation;
     }
 
+    pub fn clip_rectangle(&self, area: Rectangle) -> Rectangle {
+        area.intersection(&self.bounding_box())
+    }
+
+    pub fn map_logical_rectangle_to_native(&self, area: &Rectangle) -> Rectangle {
+        self.map_rectangle_to_native(area)
+    }
+
     pub fn release(self) -> (SPI, DC, SDCS) {
         (self.spi, self.dc, self.sd_cs_guard)
     }
@@ -258,7 +259,7 @@ where
         self.command(CMD_SLEEP_OUT, &[])?;
         delay.delay_ns(SLEEP_OUT_DELAY_NS);
         self.command(CMD_PIXEL_FORMAT_SET, &[PIXEL_FORMAT_RGB565])?;
-        self.command(CMD_MEMORY_ACCESS_CONTROL, &[0x08])?;
+        self.write_orientation()?;
         if self.panel.invert_colors {
             self.command(CMD_DISPLAY_INVERSION_ON, &[])?;
         }
@@ -292,6 +293,21 @@ where
         self.command(0xB6, &[0x08, 0x82, 0x1D, 0x04])
     }
 
+    pub fn set_orientation_and_apply(
+        &mut self,
+        orientation: DisplayOrientation,
+    ) -> Result<(), DisplayError<SpiError, PinError>> {
+        self.orientation = orientation;
+        self.write_orientation()
+    }
+
+    fn write_orientation(&mut self) -> Result<(), DisplayError<SpiError, PinError>> {
+        self.command(
+            CMD_MEMORY_ACCESS_CONTROL,
+            &[madctl_for_orientation(self.orientation)],
+        )
+    }
+
     pub fn command(
         &mut self,
         command: u8,
@@ -308,76 +324,6 @@ where
 
     pub fn clear(&mut self, color: Rgb565) -> Result<(), DisplayError<SpiError, PinError>> {
         self.fill_solid(&Rectangle::new(Point::zero(), self.logical_size()), color)
-    }
-
-    pub fn print_centered(
-        &mut self,
-        text: &str,
-        y: i32,
-        color: Rgb565,
-    ) -> Result<(), DisplayError<SpiError, PinError>> {
-        let style = MonoTextStyle::new(&FONT_6X10, color);
-        Text::with_alignment(
-            text,
-            Point::new(self.logical_size().width as i32 / 2, y),
-            style,
-            Alignment::Center,
-        )
-        .draw(self)
-        .map(|_| ())
-    }
-
-    pub fn draw_validation_screen(
-        &mut self,
-        title: &str,
-        detail: &str,
-        accent: Rgb565,
-    ) -> Result<(), DisplayError<SpiError, PinError>> {
-        self.clear(Rgb565::BLACK)?;
-        Rectangle::new(Point::new(0, 0), Size::new(320, 240))
-            .into_styled(PrimitiveStyle::with_stroke(accent, 6))
-            .draw(self)?;
-        Rectangle::new(Point::new(12, 12), Size::new(296, 52))
-            .into_styled(PrimitiveStyle::with_fill(accent))
-            .draw(self)?;
-
-        let title_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
-        let detail_style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
-        let hint_style = MonoTextStyle::new(&FONT_6X10, accent);
-
-        Text::with_alignment(title, Point::new(160, 45), title_style, Alignment::Center)
-            .draw(self)?;
-        Text::with_alignment(
-            detail,
-            Point::new(160, 106),
-            detail_style,
-            Alignment::Center,
-        )
-        .draw(self)?;
-        Text::with_alignment(
-            "If readable, CoreS3 LCD init works",
-            Point::new(160, 138),
-            detail_style,
-            Alignment::Center,
-        )
-        .draw(self)?;
-
-        Rectangle::new(Point::new(48, 172), Size::new(64, 34))
-            .into_styled(PrimitiveStyle::with_fill(Rgb565::RED))
-            .draw(self)?;
-        Rectangle::new(Point::new(128, 172), Size::new(64, 34))
-            .into_styled(PrimitiveStyle::with_fill(Rgb565::GREEN))
-            .draw(self)?;
-        Rectangle::new(Point::new(208, 172), Size::new(64, 34))
-            .into_styled(PrimitiveStyle::with_fill(Rgb565::BLUE))
-            .draw(self)?;
-        Text::with_alignment("RED", Point::new(80, 225), hint_style, Alignment::Center)
-            .draw(self)?;
-        Text::with_alignment("GREEN", Point::new(160, 225), hint_style, Alignment::Center)
-            .draw(self)?;
-        Text::with_alignment("BLUE", Point::new(240, 225), hint_style, Alignment::Center)
-            .draw(self)?;
-        Ok(())
     }
 
     pub fn blit_pixels<I>(
@@ -594,6 +540,15 @@ where
             self.flush_run(current)?;
         }
         Ok(())
+    }
+}
+
+const fn madctl_for_orientation(orientation: DisplayOrientation) -> u8 {
+    match orientation {
+        DisplayOrientation::Landscape => 0x08,
+        DisplayOrientation::LandscapeInverted => 0xC8,
+        DisplayOrientation::Portrait => 0x68,
+        DisplayOrientation::PortraitInverted => 0xA8,
     }
 }
 

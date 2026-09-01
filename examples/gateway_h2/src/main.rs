@@ -68,14 +68,15 @@ fn main() -> ! {
 
     let uart_probe = probe_gateway_h2_uart(&mut gateway_parts.uart);
 
-    display_parts
-        .display
-        .draw_validation_screen(
-            "GATEWAY H2",
-            "BSP UART link + Matter config scaffold",
-            Rgb565::GREEN,
-        )
-        .expect("draw validation screen");
+    display_parts.display.clear(Rgb565::BLACK).expect("clear");
+    Rectangle::new(Point::new(0, 0), Size::new(320, 24))
+        .into_styled(PrimitiveStyle::with_fill(Rgb565::GREEN))
+        .draw(&mut display_parts.display)
+        .expect("header");
+    let header = MonoTextStyle::new(&FONT_6X10, Rgb565::BLACK);
+    Text::new("GATEWAY H2", Point::new(8, 16), header)
+        .draw(&mut display_parts.display)
+        .expect("header text");
 
     Rectangle::new(Point::new(18, 78), Size::new(284, 122))
         .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))

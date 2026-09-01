@@ -38,14 +38,15 @@ fn main() -> ! {
     })
     .expect("initialize CoreS3 display");
 
-    parts
-        .display
-        .draw_validation_screen(
-            "DIRTY REGIONS",
-            "Animated sprite with partial LCD blits",
-            Rgb565::YELLOW,
-        )
-        .expect("draw validation screen");
+    parts.display.clear(Rgb565::BLACK).expect("clear");
+    Rectangle::new(Point::new(0, 0), Size::new(320, 24))
+        .into_styled(PrimitiveStyle::with_fill(Rgb565::YELLOW))
+        .draw(&mut parts.display)
+        .expect("header");
+    let header = MonoTextStyle::new(&FONT_6X10, Rgb565::BLACK);
+    Text::new("DIRTY REGIONS", Point::new(8, 16), header)
+        .draw(&mut parts.display)
+        .expect("header text");
 
     Rectangle::new(Point::new(18, 78), Size::new(284, 122))
         .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))

@@ -6,6 +6,17 @@ members = [
     "examples/dirty_regions",
     "examples/dual_core",
     "examples/gateway_h2",
+    "examples/display_widgets",
+    "examples/touch_demo",
+    "examples/battery_status",
+    "examples/imu",
+    "examples/compass",
+    "examples/rtc",
+    "examples/audio_init",
+    "examples/sound_wav",
+    "examples/sd_card",
+    "examples/gateway_h2_transport",
+    "examples/full_board_demo",
 ]
 
 [workspace.package]
@@ -21,7 +32,7 @@ keywords = ["esp32s3", "embedded", "m5stack", "cores3", "no-std"]
 categories = ["embedded", "hardware-support", "no-std"]
 
 [workspace.dependencies]
-core-s3 = { path = "crates/core-s3", version = "0.2.0" }
+core-s3 = { path = "crates/core-s3", version = "0.3.0" }
 critical-section = "1.2.0"
 defmt = "1.0.1"
 embedded-graphics = { version = "0.8.2", default-features = false }

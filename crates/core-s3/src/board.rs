@@ -10,6 +10,7 @@ pub struct Board {
     pub display: DisplaySpec,
     pub i2c: pins::I2cBusPins,
     pub spi_display: pins::SpiDisplayPins,
+    pub sd: crate::sd::SdCardSlot,
     pub camera: pins::CameraPins,
     pub i2s: pins::I2sAudioPins,
 }
@@ -58,6 +59,7 @@ impl CoreS3 {
         },
         i2c: pins::I2cBusPins::INTERNAL,
         spi_display: pins::SpiDisplayPins::LCD,
+        sd: crate::sd::SdCardSlot::CORE_S3,
         camera: pins::CameraPins::GC0308,
         i2s: pins::I2sAudioPins::CODECS,
     };

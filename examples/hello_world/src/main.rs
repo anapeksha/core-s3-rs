@@ -3,7 +3,11 @@
 
 use core::fmt::Write;
 
-use core_s3::{CoreS3, bsp::CoreS3DisplayResources};
+use core_s3::{
+    CoreS3,
+    bsp::CoreS3DisplayResources,
+    ui::{Label, StatusBar, Theme},
+};
 use embedded_graphics::{
     mono_font::{MonoTextStyle, ascii::FONT_6X10},
     pixelcolor::Rgb565,
@@ -37,15 +41,24 @@ fn main() -> ! {
     })
     .expect("initialize CoreS3 display");
 
-    parts
-        .display
-        .draw_validation_screen("HELLO WORLD", "Board metadata + LCD bring-up", Rgb565::CYAN)
-        .expect("draw validation screen");
-
-    Rectangle::new(Point::new(18, 82), Size::new(284, 82))
-        .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+    parts.display.clear(Rgb565::BLACK).expect("clear");
+    StatusBar {
+        bounds: Rectangle::new(Point::new(0, 0), Size::new(320, 24)),
+        text: "core-s3 hello_world",
+    }
+    .draw(&mut parts.display, Theme::DARK)
+    .expect("status bar");
+    Rectangle::new(Point::new(12, 36), Size::new(296, 168))
+        .into_styled(PrimitiveStyle::with_stroke(Rgb565::CYAN, 2))
         .draw(&mut parts.display)
-        .expect("clear info panel");
+        .expect("border");
+    Label {
+        text: "HELLO WORLD",
+        top_left: Point::new(34, 64),
+        color: Rgb565::CYAN,
+    }
+    .draw(&mut parts.display)
+    .expect("title");
 
     let style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
     let accent = MonoTextStyle::new(&FONT_6X10, Rgb565::CYAN);

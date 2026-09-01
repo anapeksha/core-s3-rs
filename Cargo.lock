@@ -3,6 +3,19 @@
 version = 4
 
 [[package]]
+name = "audio_init"
+version = "0.1.0"
+dependencies = [
+ "core-s3",
+ "embedded-graphics",
+ "esp-backtrace",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "heapless 0.9.3",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13,6 +26,19 @@ name = "az"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7b7e4c2464d97fe331d41de9d5db0def0a96f4d823b8b32a2efd503578988973"
+
+[[package]]
+name = "battery_status"
+version = "0.1.0"
+dependencies = [
+ "core-s3",
+ "embedded-graphics",
+ "esp-backtrace",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "heapless 0.9.3",
+]
 
 [[package]]
 name = "bitfield"
@@ -74,8 +100,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
+name = "compass"
+version = "0.1.0"
+dependencies = [
+ "core-s3",
+ "embedded-graphics",
+ "embedded-hal 1.0.0",
+ "esp-backtrace",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "heapless 0.9.3",
+]
+
+[[package]]
 name = "core-s3"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "defmt",
  "embedded-graphics",
@@ -224,6 +264,19 @@ dependencies = [
 
 [[package]]
 name = "dirty_regions"
+version = "0.1.0"
+dependencies = [
+ "core-s3",
+ "embedded-graphics",
+ "esp-backtrace",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "heapless 0.9.3",
+]
+
+[[package]]
+name = "display_widgets"
 version = "0.1.0"
 dependencies = [
  "core-s3",
@@ -811,6 +864,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "full_board_demo"
+version = "0.1.0"
+dependencies = [
+ "core-s3",
+ "embedded-graphics",
+ "embedded-hal-bus",
+ "esp-backtrace",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "heapless 0.9.3",
+]
+
+[[package]]
 name = "futures-core"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -841,6 +908,19 @@ dependencies = [
 
 [[package]]
 name = "gateway_h2"
+version = "0.1.0"
+dependencies = [
+ "core-s3",
+ "embedded-graphics",
+ "esp-backtrace",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "heapless 0.9.3",
+]
+
+[[package]]
+name = "gateway_h2_transport"
 version = "0.1.0"
 dependencies = [
  "core-s3",
@@ -928,6 +1008,20 @@ name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
+
+[[package]]
+name = "imu"
+version = "0.1.0"
+dependencies = [
+ "core-s3",
+ "embedded-graphics",
+ "embedded-hal 1.0.0",
+ "esp-backtrace",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "heapless 0.9.3",
+]
 
 [[package]]
 name = "indexmap"
@@ -1198,6 +1292,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1376b15f3ff160e9b1e8ea564ce427f2f6fcf77528cc0a8bf405cb476f9cea7"
 
 [[package]]
+name = "rtc"
+version = "0.1.0"
+dependencies = [
+ "core-s3",
+ "embedded-graphics",
+ "esp-backtrace",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "heapless 0.9.3",
+]
+
+[[package]]
 name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1208,6 +1315,19 @@ name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
+
+[[package]]
+name = "sd_card"
+version = "0.1.0"
+dependencies = [
+ "core-s3",
+ "embedded-graphics",
+ "esp-backtrace",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "heapless 0.9.3",
+]
 
 [[package]]
 name = "semihosting"
@@ -1272,6 +1392,19 @@ name = "somni-parser"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a0f368519fc6c85fc1afdb769fb5a51123f6158013e143656e25a3485a0d401c"
+
+[[package]]
+name = "sound_wav"
+version = "0.1.0"
+dependencies = [
+ "core-s3",
+ "embedded-graphics",
+ "esp-backtrace",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "heapless 0.9.3",
+]
 
 [[package]]
 name = "stable_deref_trait"
@@ -1394,6 +1527,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d38ac1cf9b95face32296c0a3ede1fdc270627c9d9c02a7274dd6d960dc4d56"
 dependencies = [
  "winnow",
+]
+
+[[package]]
+name = "touch_demo"
+version = "0.1.0"
+dependencies = [
+ "core-s3",
+ "embedded-graphics",
+ "esp-backtrace",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "heapless 0.9.3",
 ]
 
 [[package]]
