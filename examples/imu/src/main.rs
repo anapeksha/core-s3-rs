@@ -116,20 +116,183 @@ fn main() -> ! {
     .draw(display)
     .expect("status");
 
+    let calibration = calibrate_imu(&mut imu, &mut delay, display);
+    imu.set_accel_offset(calibration.accel_offset);
+    imu.set_gyro_offset(calibration.gyro_offset);
+    draw_calibration(display, calibration);
+
+    let mut filter = ImuFilter::default();
     let mut last_accel = None;
     let mut last_gyro = None;
 
     loop {
-        delay.delay(Duration::from_millis(200));
+        delay.delay(Duration::from_millis(100));
         let int_status = imu.interrupt_status_1().ok();
         let accel = imu.acceleration_raw().ok();
         let gyro = imu.gyroscope_raw().ok();
-        if accel != last_accel || gyro != last_gyro {
-            draw_imu(display, int_status, accel, gyro);
-            last_accel = accel;
-            last_gyro = gyro;
+        let filtered = filter.update(accel, gyro);
+        if filtered.accel != last_accel || filtered.gyro != last_gyro {
+            draw_imu(display, int_status, filtered.accel, filtered.gyro);
+            last_accel = filtered.accel;
+            last_gyro = filtered.gyro;
         }
     }
+}
+
+#[derive(Clone, Copy)]
+struct ImuCalibration {
+    accel_offset: Vector3,
+    gyro_offset: Vector3,
+}
+
+#[derive(Default)]
+struct ImuFilter {
+    accel: Option<Vector3>,
+    gyro: Option<Vector3>,
+}
+
+struct FilteredImu {
+    accel: Option<Vector3>,
+    gyro: Option<Vector3>,
+}
+
+impl ImuFilter {
+    fn update(&mut self, accel: Option<Vector3>, gyro: Option<Vector3>) -> FilteredImu {
+        self.accel = smooth_vector(self.accel, accel);
+        self.gyro = smooth_vector(self.gyro, gyro).map(apply_deadband);
+        FilteredImu {
+            accel: self.accel,
+            gyro: self.gyro,
+        }
+    }
+}
+
+fn smooth_vector(previous: Option<Vector3>, current: Option<Vector3>) -> Option<Vector3> {
+    match (previous, current) {
+        (Some(prev), Some(now)) => Some(Vector3::new(
+            smooth_axis(prev.x, now.x),
+            smooth_axis(prev.y, now.y),
+            smooth_axis(prev.z, now.z),
+        )),
+        (_, current) => current,
+    }
+}
+
+fn smooth_axis(previous: i32, current: i32) -> i32 {
+    ((previous * 7) + current) / 8
+}
+
+fn apply_deadband(value: Vector3) -> Vector3 {
+    const GYRO_DEADBAND: i32 = 8;
+    Vector3::new(
+        deadband_axis(value.x, GYRO_DEADBAND),
+        deadband_axis(value.y, GYRO_DEADBAND),
+        deadband_axis(value.z, GYRO_DEADBAND),
+    )
+}
+
+fn deadband_axis(value: i32, threshold: i32) -> i32 {
+    if value.abs() <= threshold { 0 } else { value }
+}
+
+fn calibrate_imu<I2C, Error>(
+    imu: &mut Bmi270<I2C>,
+    delay: &mut esp_hal::delay::Delay,
+    display: &mut impl DrawTarget<Color = Rgb565>,
+) -> ImuCalibration
+where
+    I2C: embedded_hal::i2c::I2c<Error = Error>,
+{
+    const SAMPLES: i32 = 96;
+    const ACCEL_1G_COUNTS: i32 = 8192;
+
+    Rectangle::new(Point::new(20, 142), Size::new(274, 72))
+        .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+        .draw(display)
+        .ok();
+    let style = MonoTextStyle::new(&FONT_6X10, Rgb565::YELLOW);
+    Text::new("Calibrating: keep device still", Point::new(24, 158), style)
+        .draw(display)
+        .ok();
+
+    let mut accel_sum = Vector3::default();
+    let mut gyro_sum = Vector3::default();
+    let mut count = 0;
+
+    while count < SAMPLES {
+        delay.delay(Duration::from_millis(10));
+        let accel = imu.acceleration_raw();
+        let gyro = imu.gyroscope_raw();
+        if let (Ok(a), Ok(g)) = (accel, gyro) {
+            accel_sum = Vector3::new(accel_sum.x + a.x, accel_sum.y + a.y, accel_sum.z + a.z);
+            gyro_sum = Vector3::new(gyro_sum.x + g.x, gyro_sum.y + g.y, gyro_sum.z + g.z);
+            count += 1;
+        }
+    }
+
+    let accel_avg = div_vector(accel_sum, SAMPLES);
+    let gyro_avg = div_vector(gyro_sum, SAMPLES);
+    let gravity = expected_gravity(accel_avg, ACCEL_1G_COUNTS);
+
+    ImuCalibration {
+        accel_offset: Vector3::new(
+            accel_avg.x - gravity.x,
+            accel_avg.y - gravity.y,
+            accel_avg.z - gravity.z,
+        ),
+        gyro_offset: gyro_avg,
+    }
+}
+
+fn div_vector(value: Vector3, divisor: i32) -> Vector3 {
+    Vector3::new(value.x / divisor, value.y / divisor, value.z / divisor)
+}
+
+fn expected_gravity(value: Vector3, one_g: i32) -> Vector3 {
+    let abs_x = value.x.abs();
+    let abs_y = value.y.abs();
+    let abs_z = value.z.abs();
+    if abs_x >= abs_y && abs_x >= abs_z {
+        Vector3::new(value.x.signum() * one_g, 0, 0)
+    } else if abs_y >= abs_z {
+        Vector3::new(0, value.y.signum() * one_g, 0)
+    } else {
+        Vector3::new(0, 0, value.z.signum() * one_g)
+    }
+}
+
+fn draw_calibration<T>(display: &mut T, calibration: ImuCalibration)
+where
+    T: DrawTarget<Color = Rgb565>,
+{
+    Rectangle::new(Point::new(20, 142), Size::new(274, 72))
+        .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+        .draw(display)
+        .ok();
+    let style = MonoTextStyle::new(&FONT_6X10, Rgb565::GREEN);
+    let mut line: String<64> = String::new();
+    write!(
+        &mut line,
+        "acc offset {:>5},{:>5},{:>5}",
+        calibration.accel_offset.x, calibration.accel_offset.y, calibration.accel_offset.z
+    )
+    .unwrap();
+    Text::new(&line, Point::new(24, 158), style)
+        .draw(display)
+        .ok();
+    line.clear();
+    write!(
+        &mut line,
+        "gyr offset {:>5},{:>5},{:>5}",
+        calibration.gyro_offset.x, calibration.gyro_offset.y, calibration.gyro_offset.z
+    )
+    .unwrap();
+    Text::new(&line, Point::new(24, 176), style)
+        .draw(display)
+        .ok();
+    Text::new("Showing calibrated + filtered", Point::new(24, 194), style)
+        .draw(display)
+        .ok();
 }
 
 fn draw_imu<T>(
