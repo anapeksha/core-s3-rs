@@ -1,0 +1,20 @@
+{
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "cargo": {
+          "target": "xtensa-esp32s3-none-elf",
+          "features": "all"
+        },
+        "check": {
+          "command": "check",
+          "targets": ["xtensa-esp32s3-none-elf"],
+          "extraArgs": ["--workspace", "--all-features"]
+        },
+        "rustfmt": {
+          "overrideCommand": ["rustup", "run", "stable", "rustfmt", "--edition", "2024"]
+        }
+      }
+    }
+  }
+}
