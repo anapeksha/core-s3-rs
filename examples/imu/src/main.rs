@@ -40,8 +40,10 @@ fn main() -> ! {
 
     let mut imu = Bmi270::new(parts.internal_i2c);
     let chip_id = imu.chip_id().ok();
-    let imu_init = imu.init(Bmi270Config::DEFAULT).is_ok();
-    let delay = esp_hal::delay::Delay::new();
+    let mut delay = esp_hal::delay::Delay::new();
+    let imu_init = imu
+        .init_with_delay(Bmi270Config::DEFAULT, &mut delay)
+        .is_ok();
 
     let display = &mut parts.display;
     let theme = Theme::DARK;

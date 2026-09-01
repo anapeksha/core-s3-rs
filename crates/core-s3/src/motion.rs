@@ -4,7 +4,7 @@
 //! batteries, metal, and board current. Calibrate in the final enclosure and do
 //! not treat heading as absolute without environmental validation.
 
-use embedded_hal::i2c::I2c;
+use embedded_hal::{delay::DelayNs, i2c::I2c};
 
 use crate::devices;
 
@@ -15,6 +15,8 @@ const BMI270_ACC_CONF: u8 = 0x40;
 const BMI270_ACC_RANGE: u8 = 0x41;
 const BMI270_GYR_CONF: u8 = 0x42;
 const BMI270_GYR_RANGE: u8 = 0x43;
+const BMI270_PWR_CONF: u8 = 0x7C;
+const BMI270_PWR_CTRL: u8 = 0x7D;
 const BMI270_CMD: u8 = 0x7E;
 const BMI270_EXPECTED_CHIP_ID: u8 = 0x24;
 
@@ -130,7 +132,22 @@ where
     I2C: I2c<Error = Error>,
 {
     pub fn init(&mut self, config: Bmi270Config) -> Result<(), Error> {
+        self.write_register(BMI270_PWR_CONF, 0x00)?;
+        self.write_register(BMI270_PWR_CTRL, 0x0E)?;
+        self.configure(config)
+    }
+
+    pub fn init_with_delay(
+        &mut self,
+        config: Bmi270Config,
+        delay: &mut impl DelayNs,
+    ) -> Result<(), Error> {
         self.write_register(BMI270_CMD, 0xB6)?;
+        delay.delay_ms(2);
+        self.write_register(BMI270_PWR_CONF, 0x00)?;
+        delay.delay_ms(2);
+        self.write_register(BMI270_PWR_CTRL, 0x0E)?;
+        delay.delay_ms(10);
         self.configure(config)
     }
 
