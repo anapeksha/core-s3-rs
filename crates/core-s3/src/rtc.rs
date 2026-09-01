@@ -93,9 +93,7 @@ where
     }
 
     pub fn datetime(&mut self) -> Result<DateTime, Error> {
-        let mut data = [0u8; 7];
-        self.i2c
-            .write_read(self.address, &[REG_SECONDS], &mut data)?;
+        let data = self.datetime_registers()?;
         Ok(DateTime {
             time: Time {
                 second: bcd_to_bin(data[0] & 0x7F),
@@ -109,6 +107,15 @@ where
                 year: 2000 + u16::from(bcd_to_bin(data[6])),
             },
         })
+    }
+
+    /// Returns `true` when BM8563 reports low voltage or clock-integrity loss.
+    ///
+    /// BM8563 stores this in bit 7 of the seconds register. When set, the date
+    /// and time should be treated as potentially invalid until application code
+    /// sets a known-good time.
+    pub fn clock_integrity_lost(&mut self) -> Result<bool, Error> {
+        Ok(self.datetime_registers()?[0] & 0x80 != 0)
     }
 
     pub fn set_datetime(&mut self, datetime: DateTime) -> Result<(), Error> {
@@ -140,6 +147,13 @@ where
     pub fn set_timer(&mut self, timer: TimerConfig) -> Result<(), Error> {
         self.write_register(REG_TIMER, timer.count)?;
         self.write_register(REG_TIMER_CONTROL, 0x80 | timer_clock_code(timer.clock))
+    }
+
+    fn datetime_registers(&mut self) -> Result<[u8; 7], Error> {
+        let mut data = [0u8; 7];
+        self.i2c
+            .write_read(self.address, &[REG_SECONDS], &mut data)?;
+        Ok(data)
     }
 
     fn write_register(&mut self, register: u8, value: u8) -> Result<(), Error> {
