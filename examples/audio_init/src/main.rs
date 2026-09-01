@@ -5,7 +5,9 @@ use core::fmt::Write;
 
 use core_s3::{
     CoreS3,
-    audio::{Aw88298, Es7210, MicrophoneConfig, SpeakerConfig},
+    audio::{
+        AudioSource, Aw88298, Es7210, MicrophoneConfig, SpeakerConfig, TextToAudio, Tone, Voice,
+    },
     bsp::CoreS3DisplayResources,
     ui::{Label, StatusBar, Theme},
 };
@@ -17,6 +19,11 @@ use embedded_graphics::{
     text::Text,
 };
 use esp_backtrace as _;
+use esp_hal::{
+    dma_buffers,
+    i2s::master::{Channels, Config, DataFormat, I2s},
+    time::Rate,
+};
 use heapless::String;
 
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -46,7 +53,7 @@ fn main() -> ! {
     let mut speaker = Aw88298::new(i2c);
     let aw_probe_before = speaker.read_register16(0x00).ok();
     let aw_init = speaker.init(SpeakerConfig::DEFAULT).is_ok();
-    let aw_volume = speaker.read_register16(0x04).ok();
+    let aw_volume = speaker.read_register16(0x0C).ok();
     let _i2c = speaker.release();
 
     let display = &mut parts.display;
@@ -70,6 +77,14 @@ fn main() -> ! {
     .draw(display)
     .expect("title");
 
+    let (i2s_ok, played_tone, played_prompt) = play_audio_smoke_test(
+        peripherals.I2S1,
+        peripherals.DMA_CH1,
+        peripherals.GPIO34,
+        peripherals.GPIO33,
+        peripherals.GPIO13,
+    );
+
     draw_audio_status(
         display,
         es_probe_before,
@@ -78,6 +93,9 @@ fn main() -> ! {
         aw_probe_before,
         aw_init,
         aw_volume,
+        i2s_ok,
+        played_tone,
+        played_prompt,
     );
 
     loop {
@@ -93,6 +111,9 @@ fn draw_audio_status<T>(
     aw_probe_before: Option<u16>,
     aw_init: bool,
     aw_volume: Option<u16>,
+    i2s_ok: bool,
+    played_tone: bool,
+    played_prompt: bool,
 ) where
     T: DrawTarget<Color = Rgb565>,
 {
@@ -136,7 +157,7 @@ fn draw_audio_status<T>(
         .ok();
 
     line.clear();
-    write!(&mut line, "AW88298 volume reg 0x04: {}", HexWord(aw_volume)).unwrap();
+    write!(&mut line, "AW88298 volume reg 0x0C: {}", HexWord(aw_volume)).unwrap();
     Text::new(
         &line,
         Point::new(24, 144),
@@ -145,27 +166,116 @@ fn draw_audio_status<T>(
     .draw(display)
     .ok();
 
+    Text::new("I2S1 pins: BCK34 WS33 DO13", Point::new(24, 166), style)
+        .draw(display)
+        .ok();
+
+    line.clear();
+    write!(
+        &mut line,
+        "I2S TX:{} tone:{} prompt:{}",
+        if i2s_ok { "OK" } else { "FAIL" },
+        if played_tone { "OK" } else { "FAIL" },
+        if played_prompt { "OK" } else { "FAIL" }
+    )
+    .unwrap();
     Text::new(
-        "I2S pins: BCK34 WS33 DO13 DI14 MCLK0",
-        Point::new(24, 170),
-        style,
+        &line,
+        Point::new(24, 184),
+        if i2s_ok && played_tone && played_prompt {
+            ok
+        } else {
+            error
+        },
     )
     .draw(display)
     .ok();
-    Text::new(
-        "Format: 16 kHz, 16-bit, std I2S",
-        Point::new(24, 188),
-        style,
-    )
-    .draw(display)
-    .ok();
-    Text::new(
-        "DMA capture/playback is app-owned",
-        Point::new(24, 206),
-        warn,
-    )
-    .draw(display)
-    .ok();
+
+    Text::new("Expected: beep + short prompt", Point::new(24, 204), warn)
+        .draw(display)
+        .ok();
+}
+
+fn play_audio_smoke_test(
+    i2s1: esp_hal::peripherals::I2S1<'_>,
+    dma_ch1: esp_hal::peripherals::DMA_CH1<'_>,
+    bclk: esp_hal::peripherals::GPIO34<'_>,
+    ws: esp_hal::peripherals::GPIO33<'_>,
+    dout: esp_hal::peripherals::GPIO13<'_>,
+) -> (bool, bool, bool) {
+    let (_, _, tx_buffer, tx_descriptors) = dma_buffers!(0, 4092);
+    let Ok(i2s) = I2s::new(
+        i2s1,
+        dma_ch1,
+        Config::new_tdm_philips()
+            .with_sample_rate(Rate::from_hz(16_000))
+            .with_data_format(DataFormat::Data16Channel16)
+            .with_channels(Channels::STEREO),
+    ) else {
+        return (false, false, false);
+    };
+
+    let mut i2s_tx = i2s
+        .i2s_tx
+        .with_bclk(bclk)
+        .with_ws(ws)
+        .with_dout(dout)
+        .build(tx_descriptors);
+
+    let mut tone = Tone::new(440, 1_000, 16_000, 10_000);
+    let played_tone = play_source(&mut i2s_tx, tx_buffer, &mut tone);
+
+    let mut prompt = TextToAudio::new("ok", Voice::Robot, 16_000);
+    let played_prompt = play_source(&mut i2s_tx, tx_buffer, &mut prompt);
+
+    (true, played_tone, played_prompt)
+}
+
+fn play_source<T>(
+    i2s_tx: &mut esp_hal::i2s::master::I2sTx<'_, esp_hal::Blocking>,
+    tx_buffer: &mut [u8],
+    source: &mut T,
+) -> bool
+where
+    T: AudioSource,
+{
+    let mut any_audio = false;
+    loop {
+        let has_more = fill_stereo_i16_buffer(tx_buffer, source);
+        if !has_more && any_audio {
+            break;
+        }
+        any_audio |= has_more;
+
+        let Ok(transfer) = i2s_tx.write_dma(&tx_buffer) else {
+            return false;
+        };
+        if transfer.wait().is_err() {
+            return false;
+        }
+
+        if !has_more {
+            break;
+        }
+    }
+    any_audio
+}
+
+fn fill_stereo_i16_buffer<T>(buffer: &mut [u8], source: &mut T) -> bool
+where
+    T: AudioSource,
+{
+    let mut emitted = false;
+    for frame in buffer.chunks_exact_mut(4) {
+        let sample = source.next_sample().unwrap_or(0);
+        emitted |= sample != 0;
+        let bytes = sample.to_le_bytes();
+        frame[0] = bytes[0];
+        frame[1] = bytes[1];
+        frame[2] = bytes[0];
+        frame[3] = bytes[1];
+    }
+    emitted
 }
 
 struct HexByte(Option<u8>);
