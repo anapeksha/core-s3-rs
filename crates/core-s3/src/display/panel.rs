@@ -1,11 +1,4 @@
-use embedded_graphics::{
-    Pixel,
-    mono_font::{MonoTextStyle, ascii::FONT_6X10, ascii::FONT_10X20},
-    pixelcolor::Rgb565,
-    prelude::*,
-    primitives::{PrimitiveStyle, Rectangle},
-    text::{Alignment, Text},
-};
+use embedded_graphics::{Pixel, pixelcolor::Rgb565, prelude::*, primitives::Rectangle};
 use embedded_hal::{
     delay::DelayNs,
     digital::{Error as DigitalError, OutputPin},
@@ -331,76 +324,6 @@ where
 
     pub fn clear(&mut self, color: Rgb565) -> Result<(), DisplayError<SpiError, PinError>> {
         self.fill_solid(&Rectangle::new(Point::zero(), self.logical_size()), color)
-    }
-
-    pub fn print_centered(
-        &mut self,
-        text: &str,
-        y: i32,
-        color: Rgb565,
-    ) -> Result<(), DisplayError<SpiError, PinError>> {
-        let style = MonoTextStyle::new(&FONT_6X10, color);
-        Text::with_alignment(
-            text,
-            Point::new(self.logical_size().width as i32 / 2, y),
-            style,
-            Alignment::Center,
-        )
-        .draw(self)
-        .map(|_| ())
-    }
-
-    pub fn draw_validation_screen(
-        &mut self,
-        title: &str,
-        detail: &str,
-        accent: Rgb565,
-    ) -> Result<(), DisplayError<SpiError, PinError>> {
-        self.clear(Rgb565::BLACK)?;
-        Rectangle::new(Point::new(0, 0), Size::new(320, 240))
-            .into_styled(PrimitiveStyle::with_stroke(accent, 6))
-            .draw(self)?;
-        Rectangle::new(Point::new(12, 12), Size::new(296, 52))
-            .into_styled(PrimitiveStyle::with_fill(accent))
-            .draw(self)?;
-
-        let title_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
-        let detail_style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
-        let hint_style = MonoTextStyle::new(&FONT_6X10, accent);
-
-        Text::with_alignment(title, Point::new(160, 45), title_style, Alignment::Center)
-            .draw(self)?;
-        Text::with_alignment(
-            detail,
-            Point::new(160, 106),
-            detail_style,
-            Alignment::Center,
-        )
-        .draw(self)?;
-        Text::with_alignment(
-            "If readable, CoreS3 LCD init works",
-            Point::new(160, 138),
-            detail_style,
-            Alignment::Center,
-        )
-        .draw(self)?;
-
-        Rectangle::new(Point::new(48, 172), Size::new(64, 34))
-            .into_styled(PrimitiveStyle::with_fill(Rgb565::RED))
-            .draw(self)?;
-        Rectangle::new(Point::new(128, 172), Size::new(64, 34))
-            .into_styled(PrimitiveStyle::with_fill(Rgb565::GREEN))
-            .draw(self)?;
-        Rectangle::new(Point::new(208, 172), Size::new(64, 34))
-            .into_styled(PrimitiveStyle::with_fill(Rgb565::BLUE))
-            .draw(self)?;
-        Text::with_alignment("RED", Point::new(80, 225), hint_style, Alignment::Center)
-            .draw(self)?;
-        Text::with_alignment("GREEN", Point::new(160, 225), hint_style, Alignment::Center)
-            .draw(self)?;
-        Text::with_alignment("BLUE", Point::new(240, 225), hint_style, Alignment::Center)
-            .draw(self)?;
-        Ok(())
     }
 
     pub fn blit_pixels<I>(

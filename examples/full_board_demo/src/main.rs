@@ -1,8 +1,16 @@
 #![no_std]
 #![no_main]
 
-use core_s3::{CoreS3, bsp::CoreS3DisplayResources};
-use embedded_graphics::{pixelcolor::Rgb565, prelude::RgbColor};
+use core_s3::{
+    CoreS3,
+    bsp::CoreS3DisplayResources,
+    ui::{Label, ProgressBar, StatusBar, Theme},
+};
+use embedded_graphics::{
+    pixelcolor::Rgb565,
+    prelude::*,
+    primitives::{PrimitiveStyle, Rectangle},
+};
 use esp_backtrace as _;
 
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -23,10 +31,54 @@ fn main() -> ! {
     })
     .expect("display");
 
-    parts
-        .display
-        .draw_validation_screen("FULL BOARD", "CoreS3 peripheral overview", Rgb565::GREEN)
-        .expect("draw");
+    let display = &mut parts.display;
+    let theme = Theme::DARK;
+    display.clear(Rgb565::BLACK).expect("clear");
+    StatusBar {
+        bounds: Rectangle::new(Point::new(0, 0), Size::new(320, 24)),
+        text: "core-s3 v0.3 hardware smoke",
+    }
+    .draw(display, theme)
+    .expect("status");
+    Rectangle::new(Point::new(12, 36), Size::new(296, 174))
+        .into_styled(PrimitiveStyle::with_stroke(Rgb565::GREEN, 2))
+        .draw(display)
+        .expect("border");
+    Label {
+        text: "FULL BOARD",
+        top_left: Point::new(24, 62),
+        color: Rgb565::GREEN,
+    }
+    .draw(display)
+    .expect("title");
+    Label {
+        text: "CoreS3 BSP overview",
+        top_left: Point::new(24, 88),
+        color: Rgb565::WHITE,
+    }
+    .draw(display)
+    .expect("line1");
+    Label {
+        text: "LCD/touch/power/sensors/audio",
+        top_left: Point::new(24, 106),
+        color: Rgb565::CYAN,
+    }
+    .draw(display)
+    .expect("line2");
+    Label {
+        text: "Display-rendered verification",
+        top_left: Point::new(24, 132),
+        color: Rgb565::WHITE,
+    }
+    .draw(display)
+    .expect("line3");
+    ProgressBar {
+        bounds: Rectangle::new(Point::new(24, 162), Size::new(190, 18)),
+        value: 100,
+    }
+    .draw(display, theme)
+    .expect("progress");
+
     loop {
         core::hint::spin_loop();
     }
