@@ -5,6 +5,7 @@ flash = "embed --chip esp32s3 --target xtensa-esp32s3-none-elf"
 build-std = ["core"]
 
 [target.xtensa-esp32s3-none-elf]
+runner = "cargo embed --chip esp32s3 --path"
 rustflags = [
     "-C", "link-arg=-Tlinkall.x",
 ]
