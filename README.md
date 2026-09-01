@@ -1,4 +1,4 @@
-# core-s3-rs
+# core-s3
 
 Rust board support package for the **M5Stack CoreS3 K128** (ESP32-S3) with optional support for a stacked **M5Stack Zigbee Gateway H2**.
 
