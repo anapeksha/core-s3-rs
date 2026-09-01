@@ -2,9 +2,9 @@
 //!
 //! CoreS3 uses an ES7210 microphone ADC and AW88298 speaker amplifier. This
 //! module configures the I²C-controlled devices, documents the expected I²S
-//! format, and provides small `no_std` sample-source helpers for raw PCM, tones,
-//! and simple text-to-audio prompts. High-throughput I²S clocks/DMA remain in
-//! the HAL/application layer.
+//! format, and provides small `no_std` sample-source helpers for raw PCM, WAV
+//! assets, and tones. High-throughput I²S clocks/DMA remain in the
+//! HAL/application layer.
 
 use embedded_hal::i2c::I2c;
 
@@ -195,6 +195,139 @@ impl AudioSource for RawPcm<'_> {
     }
 }
 
+/// Error returned while parsing a PCM WAV asset.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WavError {
+    /// The byte slice is too short for a WAV header or chunk.
+    Truncated,
+    /// The file is not a RIFF/WAVE file.
+    NotWave,
+    /// The file does not contain a supported `fmt ` chunk.
+    UnsupportedFormat,
+    /// The file has no PCM data chunk.
+    MissingData,
+}
+
+/// Borrowed 16-bit PCM WAV source for app-owned I²S streaming.
+///
+/// This parser intentionally supports the simple format useful for embedded
+/// prompts: RIFF/WAVE, PCM format tag 1, 16-bit little-endian samples, mono or
+/// stereo. Stereo input is downmixed by averaging left and right samples. It does
+/// not allocate and can wrap `include_bytes!()` assets stored in flash.
+pub struct WavPcm16<'a> {
+    data: &'a [u8],
+    cursor: usize,
+    end: usize,
+    channels: u16,
+    sample_rate_hz: u32,
+}
+
+impl<'a> WavPcm16<'a> {
+    /// Parse a borrowed WAV file.
+    pub fn new(wav: &'a [u8]) -> Result<Self, WavError> {
+        if wav.len() < 12 {
+            return Err(WavError::Truncated);
+        }
+        if &wav[0..4] != b"RIFF" || &wav[8..12] != b"WAVE" {
+            return Err(WavError::NotWave);
+        }
+
+        let mut offset = 12;
+        let mut channels = 0u16;
+        let mut sample_rate_hz = 0u32;
+        let mut bits_per_sample = 0u16;
+        let mut format_tag = 0u16;
+        let mut data_range = None;
+
+        while offset + 8 <= wav.len() {
+            let id = &wav[offset..offset + 4];
+            let size = read_le_u32(wav, offset + 4).ok_or(WavError::Truncated)? as usize;
+            let payload = offset + 8;
+            let next = payload.checked_add(size).ok_or(WavError::Truncated)?;
+            if next > wav.len() {
+                return Err(WavError::Truncated);
+            }
+
+            if id == b"fmt " {
+                if size < 16 {
+                    return Err(WavError::UnsupportedFormat);
+                }
+                format_tag = read_le_u16(wav, payload).ok_or(WavError::Truncated)?;
+                channels = read_le_u16(wav, payload + 2).ok_or(WavError::Truncated)?;
+                sample_rate_hz = read_le_u32(wav, payload + 4).ok_or(WavError::Truncated)?;
+                bits_per_sample = read_le_u16(wav, payload + 14).ok_or(WavError::Truncated)?;
+            } else if id == b"data" {
+                data_range = Some((payload, next));
+            }
+
+            offset = next + (size & 1);
+        }
+
+        if format_tag != 1 || bits_per_sample != 16 || !(channels == 1 || channels == 2) {
+            return Err(WavError::UnsupportedFormat);
+        }
+        let (cursor, end) = data_range.ok_or(WavError::MissingData)?;
+        Ok(Self {
+            data: wav,
+            cursor,
+            end,
+            channels,
+            sample_rate_hz,
+        })
+    }
+
+    /// Return the sample rate declared by the WAV file.
+    pub const fn sample_rate_hz(&self) -> u32 {
+        self.sample_rate_hz
+    }
+
+    /// Return the number of source channels: 1 or 2.
+    pub const fn channels(&self) -> u16 {
+        self.channels
+    }
+}
+
+impl AudioSource for WavPcm16<'_> {
+    fn next_sample(&mut self) -> Option<i16> {
+        match self.channels {
+            1 => {
+                if self.cursor + 2 > self.end {
+                    return None;
+                }
+                let sample = read_le_i16(self.data, self.cursor)?;
+                self.cursor += 2;
+                Some(sample)
+            }
+            2 => {
+                if self.cursor + 4 > self.end {
+                    return None;
+                }
+                let left = i32::from(read_le_i16(self.data, self.cursor)?);
+                let right = i32::from(read_le_i16(self.data, self.cursor + 2)?);
+                self.cursor += 4;
+                Some(((left + right) / 2) as i16)
+            }
+            _ => None,
+        }
+    }
+}
+
+fn read_le_u16(data: &[u8], offset: usize) -> Option<u16> {
+    let bytes = data.get(offset..offset + 2)?;
+    Some(u16::from_le_bytes([bytes[0], bytes[1]]))
+}
+
+fn read_le_i16(data: &[u8], offset: usize) -> Option<i16> {
+    let bytes = data.get(offset..offset + 2)?;
+    Some(i16::from_le_bytes([bytes[0], bytes[1]]))
+}
+
+fn read_le_u32(data: &[u8], offset: usize) -> Option<u32> {
+    let bytes = data.get(offset..offset + 4)?;
+    Some(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
 /// Small sine-wave tone source for beeps and smoke tests.
 pub struct Tone {
     phase: u32,
@@ -244,127 +377,6 @@ impl AudioSource for Tone {
         self.phase = self.phase.wrapping_add(self.phase_step);
         Some(((i32::from(SINE_64_Q15[index]) * i32::from(self.amplitude)) / 32767) as i16)
     }
-}
-
-/// Voice profile for the small prompt generator.
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Voice {
-    /// Mid-range, unobtrusive prompt voice.
-    Neutral,
-    /// Lower-pitched prompt voice.
-    Low,
-    /// Higher-pitched prompt voice.
-    High,
-    /// Wider pitch steps for a more synthetic prompt.
-    Robot,
-}
-
-impl Voice {
-    const fn profile(self) -> VoiceProfile {
-        match self {
-            Voice::Neutral => VoiceProfile {
-                base_hz: 420,
-                step_hz: 18,
-                amplitude: 6_000,
-            },
-            Voice::Low => VoiceProfile {
-                base_hz: 260,
-                step_hz: 12,
-                amplitude: 7_000,
-            },
-            Voice::High => VoiceProfile {
-                base_hz: 620,
-                step_hz: 24,
-                amplitude: 5_000,
-            },
-            Voice::Robot => VoiceProfile {
-                base_hz: 360,
-                step_hz: 48,
-                amplitude: 8_000,
-            },
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-struct VoiceProfile {
-    base_hz: u16,
-    step_hz: u16,
-    amplitude: i16,
-}
-
-/// Tiny no-heap text-to-audio prompt source.
-///
-/// This is intentionally not natural speech synthesis. It maps text into short
-/// voice-dependent pitched tones so firmware can provide audible prompts without
-/// allocation or a large TTS engine. Full natural TTS should live in an
-/// application/service layer and feed this crate through [`RawPcm`].
-pub struct TextToAudio<'a> {
-    text: &'a [u8],
-    position: usize,
-    current: Option<Tone>,
-    voice: VoiceProfile,
-    sample_rate_hz: u32,
-}
-
-impl<'a> TextToAudio<'a> {
-    /// Create a prompt source from UTF-8 text.
-    ///
-    /// The generator consumes bytes, so non-ASCII text will still produce a prompt
-    /// but not phonetic speech. Use [`RawPcm`] for application-generated natural TTS.
-    pub fn new(text: &'a str, voice: Voice, sample_rate_hz: u32) -> Self {
-        Self {
-            text: text.as_bytes(),
-            position: 0,
-            current: None,
-            voice: voice.profile(),
-            sample_rate_hz,
-        }
-    }
-}
-
-impl AudioSource for TextToAudio<'_> {
-    fn next_sample(&mut self) -> Option<i16> {
-        loop {
-            if let Some(tone) = &mut self.current {
-                if let Some(sample) = tone.next_sample() {
-                    return Some(sample);
-                }
-            }
-            self.current = None;
-            let byte = *self.text.get(self.position)?;
-            self.position += 1;
-            let duration = if byte == b' ' { 90 } else { 70 };
-            let frequency = char_frequency(byte, self.voice);
-            let amplitude = if byte == b' ' {
-                0
-            } else {
-                self.voice.amplitude
-            };
-            self.current = Some(Tone::new(
-                frequency,
-                duration,
-                self.sample_rate_hz,
-                amplitude,
-            ));
-        }
-    }
-}
-
-fn char_frequency(byte: u8, voice: VoiceProfile) -> u16 {
-    if byte == b' ' {
-        return 1;
-    }
-    let normalized = byte.to_ascii_lowercase();
-    let bucket = if normalized.is_ascii_lowercase() {
-        normalized - b'a'
-    } else if normalized.is_ascii_digit() {
-        normalized - b'0' + 26
-    } else {
-        36
-    };
-    voice.base_hz + u16::from(bucket % 16) * voice.step_hz
 }
 
 /// ES7210 microphone ADC I²C control driver.
@@ -563,6 +575,36 @@ mod tests {
     }
 
     #[test]
+    fn wav_pcm16_parses_mono_prompt() {
+        let mut wav = WavPcm16::new(MONO_WAV).expect("valid mono wav");
+
+        assert_eq!(wav.sample_rate_hz(), 16_000);
+        assert_eq!(wav.channels(), 1);
+        assert_eq!(wav.next_sample(), Some(1_000));
+        assert_eq!(wav.next_sample(), Some(-1_000));
+        assert_eq!(wav.next_sample(), None);
+    }
+
+    #[test]
+    fn wav_pcm16_downmixes_stereo() {
+        let mut wav = WavPcm16::new(STEREO_WAV).expect("valid stereo wav");
+
+        assert_eq!(wav.sample_rate_hz(), 16_000);
+        assert_eq!(wav.channels(), 2);
+        assert_eq!(wav.next_sample(), Some(0));
+        assert_eq!(wav.next_sample(), Some(0));
+        assert_eq!(wav.next_sample(), None);
+    }
+
+    #[test]
+    fn wav_pcm16_rejects_non_wave() {
+        assert!(matches!(
+            WavPcm16::new(b"not wave"),
+            Err(WavError::Truncated)
+        ));
+    }
+
+    #[test]
     fn tone_yields_finite_nonzero_samples() {
         let mut tone = Tone::new(440, 10, 16_000, 8_000);
         let mut nonzero = false;
@@ -586,40 +628,22 @@ mod tests {
     }
 
     #[test]
-    fn text_to_audio_emits_for_each_voice() {
-        for voice in [Voice::Neutral, Voice::Low, Voice::High, Voice::Robot] {
-            let mut prompt = TextToAudio::new("ok", voice, 8_000);
-            let mut count = 0;
-            let mut nonzero = false;
-
-            while let Some(sample) = prompt.next_sample() {
-                count += 1;
-                nonzero |= sample != 0;
-            }
-
-            assert_eq!(count, 1_120);
-            assert!(nonzero);
-        }
-    }
-
-    #[test]
-    fn text_to_audio_spaces_are_silent() {
-        let mut prompt = TextToAudio::new(" ", Voice::Neutral, 8_000);
-        let mut count = 0;
-
-        while let Some(sample) = prompt.next_sample() {
-            count += 1;
-            assert_eq!(sample, 0);
-        }
-
-        assert_eq!(count, 720);
-    }
-
-    #[test]
     fn aw88298_sample_rate_code_matches_m5_rate_buckets() {
         assert_eq!(aw88298_sample_rate_code(8_000), 0);
         assert_eq!(aw88298_sample_rate_code(16_000), 3);
         assert_eq!(aw88298_sample_rate_code(44_100), 7);
         assert_eq!(aw88298_sample_rate_code(48_000), 8);
     }
+
+    const MONO_WAV: &[u8] = &[
+        b'R', b'I', b'F', b'F', 40, 0, 0, 0, b'W', b'A', b'V', b'E', b'f', b'm', b't', b' ', 16, 0,
+        0, 0, 1, 0, 1, 0, 0x80, 0x3E, 0, 0, 0x00, 0x7D, 0, 0, 2, 0, 16, 0, b'd', b'a', b't', b'a',
+        4, 0, 0, 0, 0xE8, 0x03, 0x18, 0xFC,
+    ];
+
+    const STEREO_WAV: &[u8] = &[
+        b'R', b'I', b'F', b'F', 44, 0, 0, 0, b'W', b'A', b'V', b'E', b'f', b'm', b't', b' ', 16, 0,
+        0, 0, 1, 0, 2, 0, 0x80, 0x3E, 0, 0, 0x00, 0xFA, 0, 0, 4, 0, 16, 0, b'd', b'a', b't', b'a',
+        8, 0, 0, 0, 0xE8, 0x03, 0x18, 0xFC, 0x18, 0xFC, 0xE8, 0x03,
+    ];
 }

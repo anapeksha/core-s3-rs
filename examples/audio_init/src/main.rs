@@ -5,9 +5,7 @@ use core::fmt::Write;
 
 use core_s3::{
     CoreS3,
-    audio::{
-        AudioSource, Aw88298, Es7210, MicrophoneConfig, SpeakerConfig, TextToAudio, Tone, Voice,
-    },
+    audio::{AudioSource, Aw88298, Es7210, MicrophoneConfig, SpeakerConfig, Tone},
     bsp::CoreS3DisplayResources,
     ui::{Label, StatusBar, Theme},
 };
@@ -77,7 +75,7 @@ fn main() -> ! {
     .draw(display)
     .expect("title");
 
-    let (i2s_ok, played_tone, played_prompt) = play_audio_smoke_test(
+    let (i2s_ok, played_tone) = play_audio_smoke_test(
         peripherals.I2S1,
         peripherals.DMA_CH1,
         peripherals.GPIO34,
@@ -95,7 +93,6 @@ fn main() -> ! {
         aw_volume,
         i2s_ok,
         played_tone,
-        played_prompt,
     );
 
     loop {
@@ -113,7 +110,6 @@ fn draw_audio_status<T>(
     aw_volume: Option<u16>,
     i2s_ok: bool,
     played_tone: bool,
-    played_prompt: bool,
 ) where
     T: DrawTarget<Color = Rgb565>,
 {
@@ -173,25 +169,20 @@ fn draw_audio_status<T>(
     line.clear();
     write!(
         &mut line,
-        "I2S TX:{} tone:{} prompt:{}",
+        "I2S TX:{} tone:{}",
         if i2s_ok { "OK" } else { "FAIL" },
-        if played_tone { "OK" } else { "FAIL" },
-        if played_prompt { "OK" } else { "FAIL" }
+        if played_tone { "OK" } else { "FAIL" }
     )
     .unwrap();
     Text::new(
         &line,
         Point::new(24, 184),
-        if i2s_ok && played_tone && played_prompt {
-            ok
-        } else {
-            error
-        },
+        if i2s_ok && played_tone { ok } else { error },
     )
     .draw(display)
     .ok();
 
-    Text::new("Expected: beep + short prompt", Point::new(24, 204), warn)
+    Text::new("Expected: audible 440Hz beep", Point::new(24, 204), warn)
         .draw(display)
         .ok();
 }
@@ -202,7 +193,7 @@ fn play_audio_smoke_test(
     bclk: esp_hal::peripherals::GPIO34<'_>,
     ws: esp_hal::peripherals::GPIO33<'_>,
     dout: esp_hal::peripherals::GPIO13<'_>,
-) -> (bool, bool, bool) {
+) -> (bool, bool) {
     let (_, _, tx_buffer, tx_descriptors) = dma_buffers!(0, 4092);
     let Ok(i2s) = I2s::new(
         i2s1,
@@ -212,7 +203,7 @@ fn play_audio_smoke_test(
             .with_data_format(DataFormat::Data16Channel16)
             .with_channels(Channels::STEREO),
     ) else {
-        return (false, false, false);
+        return (false, false);
     };
 
     let mut i2s_tx = i2s
@@ -225,10 +216,7 @@ fn play_audio_smoke_test(
     let mut tone = Tone::new(440, 1_000, 16_000, 10_000);
     let played_tone = play_source(&mut i2s_tx, tx_buffer, &mut tone);
 
-    let mut prompt = TextToAudio::new("ok", Voice::Robot, 16_000);
-    let played_prompt = play_source(&mut i2s_tx, tx_buffer, &mut prompt);
-
-    (true, played_tone, played_prompt)
+    (true, played_tone)
 }
 
 fn play_source<T>(

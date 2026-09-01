@@ -13,6 +13,7 @@ members = [
     "examples/compass",
     "examples/rtc",
     "examples/audio_init",
+    "examples/sound_wav",
     "examples/gateway_h2_transport",
     "examples/full_board_demo",
 ]
