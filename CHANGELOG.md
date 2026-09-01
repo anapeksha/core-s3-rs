@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-01
+
+- Bumped the crate and workspace dependency to `0.3.0`.
+- Added AXP2101 PMIC helpers, richer `BatteryStatus`, voltage-based percentage estimation, low-battery thresholds, and voltage smoothing.
+- Added AW9523B I/O expander support for CoreS3 display/power control paths.
+- Added FT6336U touch support with gestures, down/up/move events, hit testing, and rotation-aware coordinate mapping.
+- Added BMI270 accelerometer/gyroscope helpers with configuration, calibration offsets, raw reads, and motion detection.
+- Added BMM150 magnetometer helpers with hard-iron offset support and heading helper.
+- Added BM8563 RTC helpers with `no_std` date/time types, alarm configuration, and timer metadata.
+- Added ES7210 microphone ADC and AW88298 speaker amplifier configuration helpers while keeping I2S DMA in application/HAL code.
+- Added lightweight `embedded-graphics` widgets: label, button, toggle, slider, progress bar, battery indicator, status bar, and menu.
+- Added Gateway H2 request/response/event framing utilities without implementing Matter, Thread, Zigbee, OpenThread, or Spinel protocols.
+- Added hardware smoke-test example crates for display widgets, touch, battery, IMU, compass, RTC, audio init, Gateway H2 transport, and full-board overview.
+- Documented v0.3 migration notes and the BSP/application boundary.
+
 ## [0.2.0] - 2026-09-01
 
 - Added crate-owned CoreS3 display bring-up using ESP-HAL resources.

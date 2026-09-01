@@ -1,0 +1,17 @@
+[package]
+name = "full_board_demo"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[dependencies]
+core-s3 = { workspace = true, features = ["esp-hal"] }
+embedded-graphics.workspace = true
+esp-backtrace.workspace = true
+esp-bootloader-esp-idf.workspace = true
+esp-hal.workspace = true
+esp-println.workspace = true
+heapless.workspace = true
+
+[lints]
+workspace = true

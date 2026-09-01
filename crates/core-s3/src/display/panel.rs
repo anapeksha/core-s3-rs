@@ -196,6 +196,14 @@ impl<SPI, DC, SDCS> Display<SPI, DC, SDCS> {
         self.orientation = orientation;
     }
 
+    pub fn clip_rectangle(&self, area: Rectangle) -> Rectangle {
+        area.intersection(&self.bounding_box())
+    }
+
+    pub fn map_logical_rectangle_to_native(&self, area: &Rectangle) -> Rectangle {
+        self.map_rectangle_to_native(area)
+    }
+
     pub fn release(self) -> (SPI, DC, SDCS) {
         (self.spi, self.dc, self.sd_cs_guard)
     }
@@ -258,7 +266,7 @@ where
         self.command(CMD_SLEEP_OUT, &[])?;
         delay.delay_ns(SLEEP_OUT_DELAY_NS);
         self.command(CMD_PIXEL_FORMAT_SET, &[PIXEL_FORMAT_RGB565])?;
-        self.command(CMD_MEMORY_ACCESS_CONTROL, &[0x08])?;
+        self.write_orientation()?;
         if self.panel.invert_colors {
             self.command(CMD_DISPLAY_INVERSION_ON, &[])?;
         }
@@ -290,6 +298,21 @@ where
             ],
         )?;
         self.command(0xB6, &[0x08, 0x82, 0x1D, 0x04])
+    }
+
+    pub fn set_orientation_and_apply(
+        &mut self,
+        orientation: DisplayOrientation,
+    ) -> Result<(), DisplayError<SpiError, PinError>> {
+        self.orientation = orientation;
+        self.write_orientation()
+    }
+
+    fn write_orientation(&mut self) -> Result<(), DisplayError<SpiError, PinError>> {
+        self.command(
+            CMD_MEMORY_ACCESS_CONTROL,
+            &[madctl_for_orientation(self.orientation)],
+        )
     }
 
     pub fn command(
@@ -594,6 +617,15 @@ where
             self.flush_run(current)?;
         }
         Ok(())
+    }
+}
+
+const fn madctl_for_orientation(orientation: DisplayOrientation) -> u8 {
+    match orientation {
+        DisplayOrientation::Landscape => 0x08,
+        DisplayOrientation::LandscapeInverted => 0xC8,
+        DisplayOrientation::Portrait => 0x68,
+        DisplayOrientation::PortraitInverted => 0xA8,
     }
 }
 

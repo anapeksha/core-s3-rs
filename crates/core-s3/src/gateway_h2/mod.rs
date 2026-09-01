@@ -1,4 +1,5 @@
 pub mod matter;
+pub mod transport;
 
 use crate::pins::{Gpio, GrovePortPins};
 
