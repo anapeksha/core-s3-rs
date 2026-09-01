@@ -3,6 +3,7 @@ chip = "esp32s3"
 log_level = "INFO"
 
 [default.probe]
+protocol = "Jtag"
 # Leave unset to use the first compatible probe. Set this locally if you have
 # multiple probes connected.
 # usb_vid = "303a"
