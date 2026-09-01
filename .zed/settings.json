@@ -8,11 +8,17 @@
         },
         "check": {
           "command": "check",
-          "targets": ["xtensa-esp32s3-none-elf"],
-          "extraArgs": ["--workspace", "--all-features"]
+          "targets": ["xtensa-esp32s3-none-elf"]
         },
         "rustfmt": {
-          "overrideCommand": ["rustup", "run", "stable", "rustfmt", "--edition", "2024"]
+          "overrideCommand": [
+            "rustup",
+            "run",
+            "stable",
+            "rustfmt",
+            "--edition",
+            "2024"
+          ]
         }
       }
     }
