@@ -8,9 +8,6 @@ use embedded_hal::{delay::DelayNs, i2c::I2c};
 
 use crate::devices;
 
-#[path = "motion/bmi270_config.rs"]
-mod bmi270_config;
-
 const BMI270_CHIP_ID: u8 = 0x00;
 const BMI270_ACC_DATA: u8 = 0x0C;
 const BMI270_GYR_DATA: u8 = 0x12;
@@ -23,6 +20,7 @@ const BMI270_INTERNAL_STATUS: u8 = 0x21;
 const BMI270_INIT_CTRL: u8 = 0x59;
 const BMI270_INIT_ADDR_0: u8 = 0x5B;
 const BMI270_INIT_DATA: u8 = 0x5E;
+const BMI270_CONFIG_LEN: usize = 8192;
 const BMI270_PWR_CONF: u8 = 0x7C;
 const BMI270_PWR_CTRL: u8 = 0x7D;
 const BMI270_CMD: u8 = 0x7E;
@@ -33,6 +31,12 @@ const BMM150_DATA_X_LSB: u8 = 0x42;
 const BMM150_POWER_CONTROL: u8 = 0x4B;
 const BMM150_OP_MODE: u8 = 0x4C;
 const BMM150_EXPECTED_CHIP_ID: u8 = 0x32;
+
+#[repr(C, align(4))]
+struct AlignedBytes<const N: usize>([u8; N]);
+
+static BMI270_CONFIG_FILE: AlignedBytes<BMI270_CONFIG_LEN> =
+    AlignedBytes(*include_bytes!("../firmware/bmi270_config.bin"));
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -212,14 +216,17 @@ where
         self.write_register(BMI270_INIT_CTRL, 0x00)?;
         delay.delay_ms(2);
 
-        let config_file = bmi270_config::config_file();
+        let config_file = &BMI270_CONFIG_FILE.0;
         let mut offset = 0usize;
         while offset < config_file.len() {
             let chunk_len = (config_file.len() - offset).min(16);
-            let word_addr = (offset / 2) as u16;
             self.i2c.write(
                 self.address,
-                &[BMI270_INIT_ADDR_0, word_addr as u8, (word_addr >> 8) as u8],
+                &[
+                    BMI270_INIT_ADDR_0,
+                    ((offset >> 1) & 0x0F) as u8,
+                    (offset >> 5) as u8,
+                ],
             )?;
 
             let mut packet = [0u8; 17];
