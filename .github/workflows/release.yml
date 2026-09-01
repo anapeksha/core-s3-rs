@@ -23,7 +23,14 @@ jobs:
       - name: Install flashing tooling
         run: cargo install cargo-embed --locked
       - name: Build release firmware
-        run: cargo xtask firmware --release
+        run: |
+          cargo +esp build -p hello_world --release --target xtensa-esp32s3-none-elf
+          cargo +esp build -p dirty_regions --release --target xtensa-esp32s3-none-elf
+          cargo +esp build -p gateway_h2 --release --features gateway-h2 --target xtensa-esp32s3-none-elf
+          mkdir -p target/firmware
+          cp target/xtensa-esp32s3-none-elf/release/hello_world target/firmware/core-s3-hello_world.elf
+          cp target/xtensa-esp32s3-none-elf/release/dirty_regions target/firmware/core-s3-dirty_regions.elf
+          cp target/xtensa-esp32s3-none-elf/release/gateway_h2 target/firmware/core-s3-gateway_h2.elf
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

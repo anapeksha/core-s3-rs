@@ -5,7 +5,6 @@ members = [
     "examples/hello_world",
     "examples/dirty_regions",
     "examples/gateway_h2",
-    "xtask",
 ]
 
 [workspace.package]

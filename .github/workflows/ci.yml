@@ -24,6 +24,6 @@ jobs:
       - name: Check BSP on host for tests/docs
         run: cargo test -p core-s3 --target x86_64-unknown-linux-gnu
       - name: Check workspace firmware
-        run: cargo +esp check --workspace --exclude xtask --all-features --target xtensa-esp32s3-none-elf
+        run: cargo +esp check --workspace --all-features --target xtensa-esp32s3-none-elf
       - name: Clippy
-        run: cargo +esp clippy --workspace --exclude xtask --all-features --target xtensa-esp32s3-none-elf -- -D warnings
+        run: cargo +esp clippy --workspace --all-features --target xtensa-esp32s3-none-elf -- -D warnings
