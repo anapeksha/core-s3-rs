@@ -103,7 +103,7 @@ fn main() -> ! {
         let datetime = rtc.datetime().ok();
         let integrity_lost = rtc.clock_integrity_lost().ok();
         let second = datetime.map(|dt| dt.time.second);
-        if tick % 4 == 0 || second != last_second {
+        if tick.is_multiple_of(4) || second != last_second {
             draw_rtc(&mut sprite, datetime, integrity_lost, tick);
             sprite
                 .flush_dirty_at(display, SPRITE_ORIGIN)

@@ -347,16 +347,11 @@ impl Tone {
         sample_rate_hz: u32,
         amplitude: i16,
     ) -> Self {
-        let phase_step = if sample_rate_hz == 0 {
-            0
-        } else {
-            ((frequency_hz as u32) << 16) / sample_rate_hz
+        let phase_step = match ((frequency_hz as u32) << 16).checked_div(sample_rate_hz) {
+            Some(value) => value,
+            None => 0,
         };
-        let remaining_samples = if sample_rate_hz == 0 {
-            0
-        } else {
-            (sample_rate_hz / 1000) * duration_ms as u32
-        };
+        let remaining_samples = (sample_rate_hz / 1000) * duration_ms as u32;
 
         Self {
             phase: 0,

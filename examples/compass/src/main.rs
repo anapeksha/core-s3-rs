@@ -126,13 +126,15 @@ fn main() -> ! {
 
         draw_live_text(
             &mut text_sprite,
-            tick,
-            int_status,
-            pwr_status,
-            filtered_mag,
-            calibrated_mag,
-            heading,
-            true,
+            CompassText {
+                tick,
+                int_status,
+                pwr_status,
+                magnetic: filtered_mag,
+                calibrated: calibrated_mag,
+                heading,
+                calibration_ready: true,
+            },
         );
         text_sprite
             .flush_dirty_at(display, TEXT_ORIGIN)
@@ -401,8 +403,8 @@ where
     .ok();
 }
 
-fn draw_live_text<T>(
-    sprite: &mut T,
+#[derive(Clone, Copy)]
+struct CompassText {
     tick: u32,
     int_status: Option<u8>,
     pwr_status: Option<u8>,
@@ -410,7 +412,10 @@ fn draw_live_text<T>(
     calibrated: Option<Vector3>,
     heading: Option<u16>,
     calibration_ready: bool,
-) where
+}
+
+fn draw_live_text<T>(sprite: &mut T, state: CompassText)
+where
     T: DrawTarget<Color = Rgb565>,
 {
     Rectangle::new(
@@ -430,14 +435,14 @@ fn draw_live_text<T>(
     write!(
         &mut line,
         "tick:{:>5} i:{} p:{}",
-        tick,
-        HexByte(int_status),
-        HexByte(pwr_status)
+        state.tick,
+        HexByte(state.int_status),
+        HexByte(state.pwr_status)
     )
     .unwrap();
     Text::new(&line, Point::new(0, 12), style).draw(sprite).ok();
 
-    if let Some(mag) = magnetic {
+    if let Some(mag) = state.magnetic {
         line.clear();
         write!(&mut line, "raw {:>4},{:>4},{:>4}", mag.x, mag.y, mag.z).unwrap();
         Text::new(&line, Point::new(0, 28), accent)
@@ -449,7 +454,7 @@ fn draw_live_text<T>(
             .ok();
     }
 
-    if let Some(mag) = calibrated {
+    if let Some(mag) = state.calibrated {
         line.clear();
         write!(&mut line, "cal {:>4},{:>4},{:>4}", mag.x, mag.y, mag.z).unwrap();
         Text::new(&line, Point::new(0, 44), accent)
@@ -458,7 +463,7 @@ fn draw_live_text<T>(
     }
 
     line.clear();
-    match heading {
+    match state.heading {
         Some(heading) => {
             let degrees = heading / 100;
             write!(&mut line, "{:>3}deg {}", degrees, heading_name(degrees)).unwrap();
@@ -471,7 +476,7 @@ fn draw_live_text<T>(
         }
     }
 
-    if !calibration_ready {
+    if !state.calibration_ready {
         Text::new("rotate flat to calibrate", Point::new(0, 76), warn)
             .draw(sprite)
             .ok();

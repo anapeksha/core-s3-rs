@@ -85,14 +85,16 @@ fn main() -> ! {
 
     draw_audio_status(
         display,
-        es_probe_before,
-        es_init,
-        es_gain,
-        aw_probe_before,
-        aw_init,
-        aw_volume,
-        i2s_ok,
-        played_tone,
+        AudioStatus {
+            es_probe_before,
+            es_init,
+            es_gain,
+            aw_probe_before,
+            aw_init,
+            aw_volume,
+            i2s_ok,
+            played_tone,
+        },
     );
 
     loop {
@@ -100,8 +102,8 @@ fn main() -> ! {
     }
 }
 
-fn draw_audio_status<T>(
-    display: &mut T,
+#[derive(Clone, Copy)]
+struct AudioStatus {
     es_probe_before: Option<u8>,
     es_init: bool,
     es_gain: Option<u8>,
@@ -110,7 +112,10 @@ fn draw_audio_status<T>(
     aw_volume: Option<u16>,
     i2s_ok: bool,
     played_tone: bool,
-) where
+}
+
+fn draw_audio_status<T>(display: &mut T, status: AudioStatus)
+where
     T: DrawTarget<Color = Rgb565>,
 {
     let style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
@@ -122,20 +127,29 @@ fn draw_audio_status<T>(
     write!(
         &mut line,
         "ES7210 0x40 probe:{} init:{}",
-        HexByte(es_probe_before),
-        if es_init { "OK" } else { "FAIL" }
+        HexByte(status.es_probe_before),
+        if status.es_init { "OK" } else { "FAIL" }
     )
     .unwrap();
-    Text::new(&line, Point::new(24, 86), if es_init { ok } else { error })
-        .draw(display)
-        .ok();
+    Text::new(
+        &line,
+        Point::new(24, 86),
+        if status.es_init { ok } else { error },
+    )
+    .draw(display)
+    .ok();
 
     line.clear();
-    write!(&mut line, "ES7210 gain reg 0x22: {}", HexByte(es_gain)).unwrap();
+    write!(
+        &mut line,
+        "ES7210 gain reg 0x22: {}",
+        HexByte(status.es_gain)
+    )
+    .unwrap();
     Text::new(
         &line,
         Point::new(24, 104),
-        if es_gain.is_some() { ok } else { warn },
+        if status.es_gain.is_some() { ok } else { warn },
     )
     .draw(display)
     .ok();
@@ -144,20 +158,29 @@ fn draw_audio_status<T>(
     write!(
         &mut line,
         "AW88298 0x36 probe:{} init:{}",
-        HexWord(aw_probe_before),
-        if aw_init { "OK" } else { "FAIL" }
+        HexWord(status.aw_probe_before),
+        if status.aw_init { "OK" } else { "FAIL" }
     )
     .unwrap();
-    Text::new(&line, Point::new(24, 126), if aw_init { ok } else { error })
-        .draw(display)
-        .ok();
+    Text::new(
+        &line,
+        Point::new(24, 126),
+        if status.aw_init { ok } else { error },
+    )
+    .draw(display)
+    .ok();
 
     line.clear();
-    write!(&mut line, "AW88298 volume reg 0x0C: {}", HexWord(aw_volume)).unwrap();
+    write!(
+        &mut line,
+        "AW88298 volume reg 0x0C: {}",
+        HexWord(status.aw_volume)
+    )
+    .unwrap();
     Text::new(
         &line,
         Point::new(24, 144),
-        if aw_volume.is_some() { ok } else { warn },
+        if status.aw_volume.is_some() { ok } else { warn },
     )
     .draw(display)
     .ok();
@@ -170,14 +193,18 @@ fn draw_audio_status<T>(
     write!(
         &mut line,
         "I2S TX:{} tone:{}",
-        if i2s_ok { "OK" } else { "FAIL" },
-        if played_tone { "OK" } else { "FAIL" }
+        if status.i2s_ok { "OK" } else { "FAIL" },
+        if status.played_tone { "OK" } else { "FAIL" }
     )
     .unwrap();
     Text::new(
         &line,
         Point::new(24, 184),
-        if i2s_ok && played_tone { ok } else { error },
+        if status.i2s_ok && status.played_tone {
+            ok
+        } else {
+            error
+        },
     )
     .draw(display)
     .ok();
