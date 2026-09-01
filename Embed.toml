@@ -21,4 +21,4 @@ halt_afterwards = false
 enabled = false
 
 [default.gdb]
-enabled = false
+enabled = true

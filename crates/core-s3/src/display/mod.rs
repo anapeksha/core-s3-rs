@@ -1,5 +1,9 @@
+mod panel;
 mod sprite;
 
+pub use panel::{
+    BusConfig, Display, DisplayError, DisplayGeometry, DisplayOrientation, PanelConfig,
+};
 pub use sprite::{DirtySprite, DirtySpriteError, RegionSet};
 
 /// CoreS3 native panel dimensions in landscape orientation.

@@ -5,12 +5,14 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-core-s3.workspace = true
+core-s3 = { workspace = true, features = ["esp-hal"] }
 critical-section.workspace = true
+embedded-graphics.workspace = true
 esp-backtrace.workspace = true
 esp-bootloader-esp-idf.workspace = true
 esp-hal.workspace = true
 esp-println.workspace = true
+heapless.workspace = true
 static_cell.workspace = true
 
 [lints]

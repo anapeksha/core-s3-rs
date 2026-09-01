@@ -7,6 +7,8 @@
 //! display logic on the host.
 
 pub mod board;
+#[cfg(all(feature = "esp-hal", target_arch = "xtensa"))]
+pub mod bsp;
 pub mod devices;
 pub mod display;
 pub mod pins;

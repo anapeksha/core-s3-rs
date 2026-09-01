@@ -9,11 +9,13 @@ default = ["gateway-h2"]
 gateway-h2 = ["core-s3/gateway-h2"]
 
 [dependencies]
-core-s3.workspace = true
+core-s3 = { workspace = true, features = ["esp-hal"] }
+embedded-graphics.workspace = true
 esp-backtrace.workspace = true
 esp-bootloader-esp-idf.workspace = true
 esp-hal.workspace = true
 esp-println.workspace = true
+heapless.workspace = true
 
 [lints]
 workspace = true
