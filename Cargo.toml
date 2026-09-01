@@ -4,6 +4,7 @@ members = [
     "crates/core-s3",
     "examples/hello_world",
     "examples/dirty_regions",
+    "examples/dual_core",
     "examples/gateway_h2",
 ]
 

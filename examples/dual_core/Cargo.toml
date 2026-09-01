@@ -1,0 +1,17 @@
+[package]
+name = "dual_core"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[dependencies]
+core-s3.workspace = true
+critical-section.workspace = true
+esp-backtrace.workspace = true
+esp-bootloader-esp-idf.workspace = true
+esp-hal.workspace = true
+esp-println.workspace = true
+static_cell.workspace = true
+
+[lints]
+workspace = true

@@ -18,8 +18,8 @@ The crate is intentionally `#![no_std]` and keeps the reusable BSP layer small:
 crates/core-s3/          no_std BSP crate
 examples/hello_world/   minimal ESP32-S3 firmware skeleton
 examples/dirty_regions/ display sprite example
+examples/dual_core/     PRO CPU + APP CPU example
 examples/gateway_h2/    Zigbee Gateway H2 feature-gated example
-xtask/                  helper for CI/release builds
 .github/workflows/      PR validation and firmware release
 ```
 
@@ -58,9 +58,10 @@ For RAM-sensitive UI, prefer smaller per-widget sprites and compose them into th
 Install the ESP Rust toolchain with [`espup`](https://github.com/esp-rs/espup), then:
 
 ```sh
-cargo +esp check --workspace --exclude xtask --all-features --target xtensa-esp32s3-none-elf
+cargo +esp check --workspace --all-features --target xtensa-esp32s3-none-elf
 cargo +esp build -p hello_world --release --target xtensa-esp32s3-none-elf
 cargo +esp build -p dirty_regions --release --target xtensa-esp32s3-none-elf
+cargo +esp build -p dual_core --release --target xtensa-esp32s3-none-elf
 cargo +esp build -p gateway_h2 --release --features gateway-h2 --target xtensa-esp32s3-none-elf
 ```
 
@@ -73,6 +74,10 @@ cargo +esp flash --package hello_world --release
 ```
 
 `Embed.toml` is configured for the ESP32-S3 target and probe-rs flashing. If you have more than one compatible probe connected, set the probe VID/PID locally in `Embed.toml`.
+
+## Dual-core support
+
+ESP32-S3 has two Xtensa LX7 cores: the PRO CPU starts `main`, and the APP CPU can be started by firmware. This BSP supports both cores through `esp-hal`'s `CpuControl` API; see `examples/dual_core` for a minimal example that starts the APP CPU with its own stack and shares state through a critical-section mutex.
 
 ## Release workflow
 
