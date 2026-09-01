@@ -20,7 +20,7 @@ jobs:
       - name: Authenticate with crates.io
         uses: rust-lang/crates-io-auth-action@v1
       - name: Publish core-s3 crate
-        run: cargo publish -p core-s3
+        run: cargo +stable publish -p core-s3
 
   firmware:
     runs-on: ubuntu-latest
@@ -33,9 +33,7 @@ jobs:
           buildtargets: esp32s3
           ldproxy: false
       - name: Install firmware tooling
-        run: |
-          cargo install cargo-embed --locked
-          cargo install espflash --locked
+        run: cargo +stable install espflash --locked
       - name: Build release firmware
         run: |
           cargo +esp build -p hello_world --release --target xtensa-esp32s3-none-elf
