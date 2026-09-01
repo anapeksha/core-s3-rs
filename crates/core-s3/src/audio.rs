@@ -122,6 +122,12 @@ where
         self.write_register(0x22, gain_db.min(37))
     }
 
+    pub fn read_register(&mut self, register: u8) -> Result<u8, Error> {
+        let mut value = [0u8];
+        self.i2c.write_read(self.address, &[register], &mut value)?;
+        Ok(value[0])
+    }
+
     pub fn write_register(&mut self, register: u8, value: u8) -> Result<(), Error> {
         self.i2c.write(self.address, &[register, value])
     }
@@ -159,6 +165,12 @@ where
 
     pub fn set_volume(&mut self, volume: u8) -> Result<(), Error> {
         self.write_register16(0x04, u16::from(volume))
+    }
+
+    pub fn read_register16(&mut self, register: u8) -> Result<u16, Error> {
+        let mut data = [0u8; 2];
+        self.i2c.write_read(self.address, &[register], &mut data)?;
+        Ok(u16::from_be_bytes(data))
     }
 
     pub fn write_register16(&mut self, register: u8, value: u16) -> Result<(), Error> {
