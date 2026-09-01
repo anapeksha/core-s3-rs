@@ -33,6 +33,10 @@ ESP32-S3 is a dual-core Xtensa LX7 MCU. CoreS3 firmware starts on the PRO CPU; t
 | ES7210        | Microphone ADC    | I²S + control bus |
 | AW88298       | Speaker amplifier | I²S + control bus |
 
+## Matter over Thread
+
+The `gateway-h2` feature exposes `core_s3::gateway_h2::matter`, which combines Gateway H2 transport metadata with Matter commissioning and Thread dataset configuration. The module re-exports `rs-matter` for firmware crates that instantiate a real Matter server and bind it to the ESP32-H2/Thread transport.
+
 ## Validation checklist
 
 - Confirm LCD controller init sequence and color order on hardware.

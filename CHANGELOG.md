@@ -12,3 +12,5 @@ All notable changes to this project will be documented in this file.
 - Added an ESP32-S3 dual-core example.
 - Added Zed rust-analyzer settings.
 - Configured firmware releases to publish `.bin` images.
+- Added Gateway H2 Matter-over-Thread setup types backed by `rs-matter`.
+- Configured the ESP target runner to flash via `cargo-embed` for `cargo run`.

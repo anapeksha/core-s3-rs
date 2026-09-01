@@ -1,3 +1,5 @@
+pub mod matter;
+
 use crate::pins::{Gpio, GrovePortPins};
 
 /// Feature-gated support metadata for an M5Stack Zigbee Gateway H2 stack.

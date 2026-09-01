@@ -25,10 +25,10 @@ examples/gateway_h2/    Zigbee Gateway H2 feature-gated example
 
 ## Features
 
-| Feature      | Description                                                         |
-| ------------ | ------------------------------------------------------------------- |
-| `defmt`      | Enables `defmt` formatting for supported dependencies.              |
-| `gateway-h2` | Exposes `core_s3::gateway_h2` for Zigbee Gateway H2 stack metadata. |
+| Feature      | Description                                                                                         |
+| ------------ | --------------------------------------------------------------------------------------------------- |
+| `defmt`      | Enables `defmt` formatting for supported dependencies.                                              |
+| `gateway-h2` | Exposes `core_s3::gateway_h2`, Gateway H2 metadata, and `rs-matter` Matter-over-Thread setup types. |
 
 ## Display dirty-region sprite
 
@@ -74,6 +74,28 @@ cargo +esp flash --package hello_world --release
 ```
 
 `Embed.toml` is configured for the ESP32-S3 target and probe-rs flashing. If you have more than one compatible probe connected, set the probe VID/PID locally in `Embed.toml`.
+
+## Matter over Thread with Gateway H2
+
+Enable `gateway-h2` to use the Gateway H2 metadata and Matter-over-Thread setup types. The BSP re-exports `rs-matter` as `core_s3::gateway_h2::matter::stack` so firmware crates can instantiate the concrete Matter server while keeping regular CoreS3 builds free of Matter dependencies.
+
+```toml
+[dependencies]
+core-s3 = { version = "0.1", features = ["gateway-h2"] }
+```
+
+```rust
+use core_s3::gateway_h2::{
+    matter::{MatterOverThreadConfig, MatterServerConfig, ThreadDatasetConfig},
+    GatewayH2,
+};
+
+let gateway = GatewayH2::GROVE_UART;
+let matter = MatterServerConfig::new(0xFFF1, 0x8001, 3840, 20_202_021, "CoreS3 Gateway H2");
+let thread = ThreadDatasetConfig::new("core-s3-thread", 0x1234, [0; 8], 15, [0xAA; 16]);
+let setup = MatterOverThreadConfig::new(gateway, matter, thread);
+# let _ = setup;
+```
 
 ## Dual-core support
 

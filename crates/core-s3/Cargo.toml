@@ -16,7 +16,7 @@ categories.workspace = true
 [features]
 default = []
 defmt = ["dep:defmt", "heapless/defmt"]
-gateway-h2 = []
+gateway-h2 = ["dep:rs-matter"]
 
 [dependencies]
 defmt = { workspace = true, optional = true }
@@ -24,6 +24,7 @@ embedded-graphics.workspace = true
 embedded-hal.workspace = true
 embedded-hal-async.workspace = true
 heapless.workspace = true
+rs-matter = { workspace = true, optional = true }
 
 [lints]
 workspace = true
