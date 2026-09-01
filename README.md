@@ -25,10 +25,10 @@ examples/gateway_h2/    Gateway H2 UART + Matter/Thread scaffold example
 
 ## Features
 
-| Feature      | Description                                                                                                            |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------- |
-| `defmt`      | Enables `defmt` formatting for supported dependencies.                                                                 |
-| `gateway-h2` | Exposes `core_s3::gateway_h2`, Gateway H2 metadata, BSP UART bring-up, and `rs-matter` Matter-over-Thread setup types. |
+| Feature      | Description                                                                                                        |
+| ------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `defmt`      | Enables `defmt` formatting for supported dependencies.                                                             |
+| `gateway-h2` | Exposes `core_s3::gateway_h2`, Gateway H2 metadata, BSP UART bring-up, and Matter-over-Thread configuration types. |
 
 ## Display dirty-region sprite
 
@@ -77,9 +77,9 @@ cargo +esp flash --package hello_world --release
 
 ## Matter over Thread with Gateway H2
 
-Enable `gateway-h2` to use Gateway H2 metadata, the crate-owned CoreS3-to-H2 UART bring-up helper, and Matter-over-Thread setup types. The BSP re-exports `rs-matter` as `core_s3::gateway_h2::matter::stack` so firmware crates can instantiate the concrete Matter server while keeping regular CoreS3 builds free of Matter dependencies.
+Enable `gateway-h2` to use Gateway H2 metadata, the crate-owned CoreS3-to-H2 UART bring-up helper, and Matter-over-Thread setup configuration types. The BSP intentionally does not depend on or re-export a Matter stack: firmware crates should depend on `rs-matter` or another Matter implementation directly and own their concrete Matter server.
 
-Gateway H2 firmware is commonly OpenThread RCP/Spinel, OpenThread CLI, or a standalone Thread/Zigbee application depending on what is flashed to the ESP32-H2. It is not assumed to be an AT-command modem. The BSP initializes the host UART transport; consumer firmware is responsible for the concrete H2 protocol driver, Thread joining/commissioning flow, Matter endpoints, and Home Assistant behavior.
+Gateway H2 firmware is commonly OpenThread RCP/Spinel, OpenThread CLI, or a standalone Thread/Zigbee application depending on what is flashed to the ESP32-H2. It is not assumed to be an AT-command modem. The BSP initializes the host UART transport; consumer firmware is responsible for the concrete H2 protocol driver, Thread joining/commissioning flow, Matter endpoints, persistence, and Home Assistant behavior.
 
 For Home Assistant validation, a Raspberry Pi 5 running Home Assistant OS also needs a Thread Border Router/radio, such as Home Assistant Connect ZBT-1/SkyConnect or another supported OpenThread Border Router. This crate can provide the CoreS3 device side, but Home Assistant will only discover it once consumer firmware runs a real Matter server over a Thread network visible to Home Assistant.
 

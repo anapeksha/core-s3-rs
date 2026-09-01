@@ -1,12 +1,9 @@
-//! Matter-over-Thread scaffolding for the Gateway H2 stack.
+//! Matter-over-Thread configuration scaffolding for Gateway H2 applications.
 //!
 //! The Gateway H2 provides the IEEE 802.15.4/Thread-capable ESP32-H2 side of the
-//! stack. `rs-matter` provides the Matter application/session/data-model layers.
-//! This module ties those two pieces together at the BSP boundary by exposing the
-//! Gateway H2 transport metadata and commissioning/server configuration a firmware
-//! crate needs before it instantiates its concrete Matter server.
-
-pub use rs_matter as stack;
+//! stack. The BSP owns board metadata and the CoreS3-to-H2 UART transport setup,
+//! while consumer firmware owns the concrete Matter server, endpoint model,
+//! persistence, commissioning policy, and networking stack such as `rs-matter`.
 
 use heapless::String;
 
