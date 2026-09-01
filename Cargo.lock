@@ -105,6 +105,7 @@ version = "0.1.0"
 dependencies = [
  "core-s3",
  "embedded-graphics",
+ "embedded-hal 1.0.0",
  "esp-backtrace",
  "esp-bootloader-esp-idf",
  "esp-hal",

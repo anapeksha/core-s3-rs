@@ -9,18 +9,28 @@ use embedded_hal::{delay::DelayNs, i2c::I2c};
 use crate::devices;
 
 const BMI270_CHIP_ID: u8 = 0x00;
+const BMI270_STATUS: u8 = 0x03;
+const BMI270_AUX_DATA: u8 = 0x04;
 const BMI270_ACC_DATA: u8 = 0x0C;
 const BMI270_GYR_DATA: u8 = 0x12;
 const BMI270_ACC_CONF: u8 = 0x40;
 const BMI270_ACC_RANGE: u8 = 0x41;
 const BMI270_GYR_CONF: u8 = 0x42;
 const BMI270_GYR_RANGE: u8 = 0x43;
+const BMI270_AUX_CONF: u8 = 0x44;
+const BMI270_AUX_DEV_ID: u8 = 0x4B;
+const BMI270_AUX_IF_CONF: u8 = 0x4C;
+const BMI270_AUX_RD_ADDR: u8 = 0x4D;
+const BMI270_AUX_WR_ADDR: u8 = 0x4E;
+const BMI270_AUX_WR_DATA: u8 = 0x4F;
 const BMI270_INT_STATUS_1: u8 = 0x1D;
 const BMI270_INTERNAL_STATUS: u8 = 0x21;
+const BMI270_INT_MAP_DATA: u8 = 0x58;
 const BMI270_INIT_CTRL: u8 = 0x59;
 const BMI270_INIT_ADDR_0: u8 = 0x5B;
 const BMI270_INIT_DATA: u8 = 0x5E;
 const BMI270_CONFIG_LEN: usize = 8192;
+const BMI270_IF_CONF: u8 = 0x6B;
 const BMI270_PWR_CONF: u8 = 0x7C;
 const BMI270_PWR_CTRL: u8 = 0x7D;
 const BMI270_CMD: u8 = 0x7E;
@@ -31,6 +41,7 @@ const BMM150_DATA_X_LSB: u8 = 0x42;
 const BMM150_POWER_CONTROL: u8 = 0x4B;
 const BMM150_OP_MODE: u8 = 0x4C;
 const BMM150_EXPECTED_CHIP_ID: u8 = 0x32;
+const AUX_BUSY_MASK: u8 = 0x04;
 
 #[repr(C, align(4))]
 struct AlignedBytes<const N: usize>([u8; N]);
@@ -163,6 +174,7 @@ where
         self.write_register(BMI270_PWR_CONF, 0x00)?;
         delay.delay_ms(2);
         self.upload_config(delay)?;
+        self.write_register(BMI270_INT_MAP_DATA, 0xFF)?;
         self.configure(config)?;
         self.write_register(BMI270_PWR_CTRL, 0x0E)?;
         delay.delay_ms(20);
@@ -202,6 +214,49 @@ where
         self.read_register(BMI270_PWR_CTRL)
     }
 
+    /// Initializes the CoreS3 BMM150 magnetometer through the BMI270 auxiliary I2C bus.
+    ///
+    /// CoreS3 wires BMM150 behind BMI270's AUX sensor-hub interface, so it is not
+    /// reachable as a normal device on the board internal I2C bus.
+    pub fn init_bmm150_aux(&mut self, delay: &mut impl DelayNs) -> Result<u8, Error> {
+        self.aux_setup_mode(devices::i2c::BMM150_MAGNETOMETER)?;
+        self.aux_write_register(BMM150_POWER_CONTROL, 0x83, delay)?;
+        delay.delay_ms(2);
+        let chip_id = self.aux_read_register(BMM150_CHIP_ID, delay)?;
+        if chip_id == BMM150_EXPECTED_CHIP_ID {
+            self.aux_write_register(BMM150_OP_MODE, 0x38, delay)?;
+            self.write_register(BMI270_AUX_IF_CONF, 0x4F)?;
+            self.write_register(BMI270_AUX_RD_ADDR, BMM150_DATA_X_LSB)?;
+            self.write_register(BMI270_AUX_CONF, 0x0B)?;
+            self.write_register(BMI270_PWR_CTRL, 0x0F)?;
+            delay.delay_ms(50);
+        }
+        Ok(chip_id)
+    }
+
+    /// Reads BMM150 raw magnetic data from BMI270's auxiliary data window.
+    pub fn bmm150_aux_magnetic_raw(&mut self) -> Result<Vector3, Error> {
+        let mut data = [0u8; 8];
+        self.i2c
+            .write_read(self.address, &[BMI270_AUX_DATA], &mut data)?;
+        Ok(decode_bmm150_mag_data(data))
+    }
+
+    /// Performs an explicit BMM150 data-register burst read through BMI270's AUX bus.
+    ///
+    /// This is useful for hardware validation because it does not depend on the
+    /// BMI270 sensor-hub shadow window updating automatically between samples.
+    pub fn bmm150_aux_magnetic_raw_manual(
+        &mut self,
+        delay: &mut impl DelayNs,
+    ) -> Result<Vector3, Error> {
+        self.write_register(BMI270_AUX_IF_CONF, 0x4F)?;
+        self.write_register(BMI270_AUX_RD_ADDR, BMM150_DATA_X_LSB)?;
+        self.wait_aux_ready(delay)?;
+        delay.delay_ms(4);
+        self.bmm150_aux_magnetic_raw()
+    }
+
     pub fn acceleration_raw(&mut self) -> Result<Vector3, Error> {
         let raw = self.read_vector(BMI270_ACC_DATA)?;
         Ok(raw.offset(self.accel_offset))
@@ -238,6 +293,42 @@ where
 
         self.write_register(BMI270_INIT_CTRL, 0x01)?;
         delay.delay_ms(20);
+        Ok(())
+    }
+
+    fn aux_setup_mode(&mut self, i2c_address: u8) -> Result<(), Error> {
+        self.write_register(BMI270_IF_CONF, 0x20)?;
+        self.write_register(BMI270_PWR_CONF, 0x00)?;
+        self.write_register(BMI270_PWR_CTRL, 0x0E)?;
+        self.write_register(BMI270_AUX_IF_CONF, 0x80)?;
+        self.write_register(BMI270_AUX_DEV_ID, i2c_address << 1)
+    }
+
+    fn aux_write_register(
+        &mut self,
+        register: u8,
+        value: u8,
+        delay: &mut impl DelayNs,
+    ) -> Result<(), Error> {
+        self.write_register(BMI270_AUX_WR_DATA, value)?;
+        self.write_register(BMI270_AUX_WR_ADDR, register)?;
+        self.wait_aux_ready(delay)
+    }
+
+    fn aux_read_register(&mut self, register: u8, delay: &mut impl DelayNs) -> Result<u8, Error> {
+        self.write_register(BMI270_AUX_IF_CONF, 0x80)?;
+        self.write_register(BMI270_AUX_RD_ADDR, register)?;
+        self.wait_aux_ready(delay)?;
+        self.read_register(BMI270_AUX_DATA)
+    }
+
+    fn wait_aux_ready(&mut self, delay: &mut impl DelayNs) -> Result<(), Error> {
+        for _ in 0..3 {
+            if self.read_register(BMI270_STATUS)? & AUX_BUSY_MASK == 0 {
+                return Ok(());
+            }
+            delay.delay_ms(1);
+        }
         Ok(())
     }
 
@@ -368,6 +459,14 @@ fn accel_range_code(range: AccelRange) -> u8 {
         AccelRange::G16 => 0x03,
     }
 }
+fn decode_bmm150_mag_data(data: [u8; 8]) -> Vector3 {
+    Vector3::new(
+        i32::from(i16::from_le_bytes([data[0], data[1]]) >> 2),
+        i32::from(i16::from_le_bytes([data[2], data[3]]) >> 2),
+        i32::from(i16::from_le_bytes([data[4], data[5]]) & !1),
+    )
+}
+
 fn gyro_range_code(range: GyroRange) -> u8 {
     match range {
         GyroRange::Dps2000 => 0x00,
@@ -417,5 +516,11 @@ mod tests {
     fn heading_handles_cardinal_directions() {
         assert_eq!(heading_centidegrees(Vector3::new(1, 0, 0)), Some(0));
         assert_eq!(heading_centidegrees(Vector3::new(0, 1, 0)), Some(9000));
+    }
+
+    #[test]
+    fn decodes_bmm150_aux_window() {
+        let data = [0x04, 0x00, 0x08, 0x00, 0x06, 0x00, 0x00, 0x00];
+        assert_eq!(decode_bmm150_mag_data(data), Vector3::new(1, 2, 6));
     }
 }
