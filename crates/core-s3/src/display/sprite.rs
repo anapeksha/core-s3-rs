@@ -124,6 +124,41 @@ where
         self.index(point).map(|idx| self.pixels[idx])
     }
 
+    /// Returns pixels from a clipped sprite-local region in row-major order.
+    pub fn region_pixels(&self, area: Rectangle) -> SpriteRegionPixels<'_, C> {
+        let clipped = clip_to_bounds(area, W, H);
+        SpriteRegionPixels {
+            pixels: &self.pixels[..usize::from(W) * usize::from(H)],
+            stride: usize::from(W),
+            x: clipped.top_left.x.max(0) as usize,
+            y: clipped.top_left.y.max(0) as usize,
+            width: clipped.size.width as usize,
+            height: clipped.size.height as usize,
+            current_x: 0,
+            current_y: 0,
+        }
+    }
+
+    /// Draws a clipped sprite-local region into another draw target.
+    pub fn draw_region_at<T>(
+        &self,
+        target: &mut T,
+        source_area: Rectangle,
+        dest_top_left: Point,
+    ) -> Result<(), T::Error>
+    where
+        T: DrawTarget<Color = C>,
+    {
+        let clipped = clip_to_bounds(source_area, W, H);
+        if clipped.is_zero_sized() {
+            return Ok(());
+        }
+
+        let offset = clipped.top_left - source_area.top_left;
+        let target_area = Rectangle::new(dest_top_left + offset, clipped.size);
+        target.fill_contiguous(&target_area, self.region_pixels(clipped))
+    }
+
     pub fn set_pixel(&mut self, point: Point, color: C) -> Result<(), DirtySpriteError> {
         if let Some(idx) = self.index(point)
             && self.pixels[idx] != color
@@ -139,13 +174,21 @@ where
     where
         T: DrawTarget<Color = C>,
     {
-        for rect in self.dirty.iter() {
-            let clipped = clip_to_bounds(rect, W, H);
-            target.draw_iter(
-                points_in(clipped).filter_map(|point| {
-                    self.index(point).map(|idx| Pixel(point, self.pixels[idx]))
-                }),
-            )?;
+        self.flush_dirty_at(target, Point::zero())
+    }
+
+    /// Repaint only dirty rectangles into a concrete display draw target at `origin`.
+    pub fn flush_dirty_at<T>(&mut self, target: &mut T, origin: Point) -> Result<(), T::Error>
+    where
+        T: DrawTarget<Color = C>,
+    {
+        let mut regions = [None; MAX_REGIONS];
+        for (slot, region) in regions.iter_mut().zip(self.dirty.iter()) {
+            *slot = Some(region);
+        }
+
+        for region in regions.into_iter().flatten() {
+            self.draw_region_at(target, region, origin + region.top_left)?;
         }
         self.clear_dirty();
         Ok(())
@@ -195,19 +238,49 @@ where
     }
 }
 
+/// Iterator over a dirty sprite region in row-major order.
+pub struct SpriteRegionPixels<'a, C>
+where
+    C: PixelColor + Copy + Default,
+{
+    pixels: &'a [C],
+    stride: usize,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    current_x: usize,
+    current_y: usize,
+}
+
+impl<C> Iterator for SpriteRegionPixels<'_, C>
+where
+    C: PixelColor + Copy + Default,
+{
+    type Item = C;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current_y >= self.height {
+            return None;
+        }
+
+        let index = (self.y + self.current_y) * self.stride + self.x + self.current_x;
+        let color = self.pixels.get(index).copied();
+        self.current_x += 1;
+        if self.current_x >= self.width {
+            self.current_x = 0;
+            self.current_y += 1;
+        }
+        color
+    }
+}
+
 fn clip_to_bounds(rect: Rectangle, width: u16, height: u16) -> Rectangle {
     let bounds = Rectangle::new(
         Point::zero(),
         Size::new(u32::from(width), u32::from(height)),
     );
     rect.intersection(&bounds)
-}
-
-fn points_in(rect: Rectangle) -> impl Iterator<Item = Point> {
-    let top_left = rect.top_left;
-    let bottom_right = rect.bottom_right().unwrap_or(top_left);
-    (top_left.y..=bottom_right.y)
-        .flat_map(move |y| (top_left.x..=bottom_right.x).map(move |x| Point::new(x, y)))
 }
 
 fn intersects_or_touches(a: Rectangle, b: Rectangle) -> bool {
