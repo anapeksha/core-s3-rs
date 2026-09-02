@@ -16,6 +16,7 @@ members = [
     "examples/audio_init",
     "examples/sound_wav",
     "examples/sd_card",
+    "examples/sd_block_probe",
     "examples/gateway_h2_transport",
     "examples/full_board_demo",
 ]
@@ -33,7 +34,7 @@ keywords = ["esp32s3", "embedded", "m5stack", "cores3", "no-std"]
 categories = ["embedded", "hardware-support", "no-std"]
 
 [workspace.dependencies]
-core-s3 = { path = "crates/core-s3", version = "0.4.0" }
+core-s3 = { path = "crates/core-s3", version = "0.4.1" }
 critical-section = "1.2.0"
 defmt = "1.0.1"
 embedded-graphics = { version = "0.8.2", default-features = false }
@@ -55,7 +56,10 @@ heapless = { version = "0.9.3", default-features = false }
 static_cell = "2.1.1"
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+# `core-s3` contains one documented BSP-internal GPIO35 alias for the CoreS3
+# LCD D/C vs TF-card MISO hardware mux. The alias is encapsulated in safe APIs
+# and lint-allowed only at the exact unsafe expression.
+unsafe_code = "deny"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(core_s3_host_tests)'] }
 
 [workspace.lints.clippy]

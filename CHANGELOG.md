@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-03
+
+- Fixed CoreS3 shared LCD/TF-card SPI initialization to configure GPIO35 as SPI MISO for real SD reads.
+- Added a CoreS3-specific shared SD `SpiDevice` that disables the GPIO35 LCD D/C output driver during TF-card transactions and restores it afterward, keeping downstream `embedded-sdmmc::SdCard::num_bytes()` usage safe and unchanged.
+- Added `examples/sd_block_probe` to distinguish AW9523B card-detect from a real SD block-device capacity probe.
+- Documented the M5Stack official PinMap source for GPIO35 LCD D/C and TF-card MISO sharing.
+
+## [0.4.0] - 2026-09-03
+
+- Pinned the ESP32-S3/CoreS3 path to the downstream-compatible `esp-hal = "=1.1.2"` dependency family.
+- Added shared SPI resource APIs for composing display and TF-card users on the CoreS3 SPI2 signal group.
+- Added SD-card parts compatible with `embedded-hal 1.0` `SpiDevice` and optional `embedded-sdmmc` conversion.
+- Added Gateway H2 OpenThread/Spinel-facing transport traits and bounded Spinel HDLC-lite encode/decode helpers without adding Matter/Thread protocol stacks to the BSP.
+- Added a minimal downstream-style validation crate for plain Cargo `xtensa-esp32s3-none-elf` builds.
+
 ## [0.3.0] - 2026-09-01
 
 - Bumped the crate and workspace dependency to `0.3.0`.
