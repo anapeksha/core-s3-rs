@@ -18,8 +18,9 @@ use embedded_graphics::{
 };
 use esp_backtrace as _;
 use esp_hal::{
-    dma_buffers,
-    i2s::master::{Channels, Config, DataFormat, I2s},
+    dma::DmaTxBuf,
+    dma_tx_buffer,
+    i2s::master::{Channels, DataFormat, I2s, I2sTx, TdmConfig},
     time::Rate,
 };
 use heapless::String;
@@ -221,11 +222,13 @@ fn play_audio_smoke_test(
     ws: esp_hal::peripherals::GPIO33<'_>,
     dout: esp_hal::peripherals::GPIO13<'_>,
 ) -> (bool, bool) {
-    let (_, _, tx_buffer, tx_descriptors) = dma_buffers!(0, 4092);
+    let Ok(tx_buffer) = dma_tx_buffer!(4092) else {
+        return (false, false);
+    };
     let Ok(i2s) = I2s::new(
         i2s1,
         dma_ch1,
-        Config::new_tdm_philips()
+        TdmConfig::new_tdm_philips()
             .with_sample_rate(Rate::from_hz(16_000))
             .with_data_format(DataFormat::Data16Channel16)
             .with_channels(Channels::STEREO),
@@ -233,22 +236,22 @@ fn play_audio_smoke_test(
         return (false, false);
     };
 
-    let mut i2s_tx = i2s
+    let i2s_tx = i2s
         .i2s_tx
         .with_bclk(bclk)
         .with_ws(ws)
         .with_dout(dout)
-        .build(tx_descriptors);
+        .build();
 
     let mut tone = Tone::new(440, 1_000, 16_000, 10_000);
-    let played_tone = play_source(&mut i2s_tx, tx_buffer, &mut tone);
+    let played_tone = play_source(i2s_tx, tx_buffer, &mut tone);
 
     (true, played_tone)
 }
 
 fn play_source<T>(
-    i2s_tx: &mut esp_hal::i2s::master::I2sTx<'_, esp_hal::Blocking>,
-    tx_buffer: &mut [u8],
+    mut i2s_tx: I2sTx<'_, esp_hal::Blocking>,
+    mut tx_buffer: DmaTxBuf,
     source: &mut T,
 ) -> bool
 where
@@ -256,18 +259,22 @@ where
 {
     let mut any_audio = false;
     loop {
-        let has_more = fill_stereo_i16_buffer(tx_buffer, source);
+        let has_more = fill_stereo_i16_buffer(tx_buffer.as_mut_slice(), source);
+        tx_buffer.set_length(tx_buffer.capacity());
         if !has_more && any_audio {
             break;
         }
         any_audio |= has_more;
 
-        let Ok(transfer) = i2s_tx.write_dma(&tx_buffer) else {
+        let Ok(transfer) = i2s_tx.write(tx_buffer) else {
             return false;
         };
-        if transfer.wait().is_err() {
+        let (result, next_i2s_tx, next_tx_buffer) = transfer.wait();
+        if result.is_err() {
             return false;
         }
+        i2s_tx = next_i2s_tx;
+        tx_buffer = next_tx_buffer;
 
         if !has_more {
             break;
