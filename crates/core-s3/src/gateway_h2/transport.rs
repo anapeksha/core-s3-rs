@@ -1,12 +1,22 @@
 //! Framed CoreS3-to-Gateway-H2 transport helpers.
 //!
-//! This is a small host-link framing layer only. It intentionally does not
-//! implement Matter, Thread, Zigbee, OpenThread CLI, or Spinel.
+//! This module provides protocol-neutral Gateway H2 framing plus traits for
+//! OpenThread/Spinel integration in downstream firmware.
+//!
+//! The BSP does **not** implement Matter, Thread, Zigbee, OpenThread, or Spinel
+//! protocol logic. Gateway H2 firmware must be explicitly selected and validated
+//! by the application. If the attached ESP32-H2 runs OpenThread RCP firmware,
+//! downstream code can implement [`GatewayH2SpinelTransport`] over the UART.
 
 use heapless::Vec;
 
 pub const SOF: u8 = 0xA5;
 pub const MAX_PAYLOAD: usize = 128;
+
+/// Default CoreS3 Gateway H2 UART baud rate.
+pub const DEFAULT_GATEWAY_H2_BAUD: u32 = 115_200;
+/// Conservative maximum Spinel frame payload size for application-owned buffers.
+pub const DEFAULT_SPINEL_MAX_FRAME_SIZE: usize = 2048;
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -113,12 +123,127 @@ impl<const N: usize> H2Frame<N> {
     }
 }
 
+/// Gateway H2 firmware mode assumed by downstream OpenThread integration.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GatewayH2FirmwareMode {
+    /// ESP32-H2 runs OpenThread Radio Co-Processor firmware and exposes Spinel.
+    OpenThreadRcp,
+    /// ESP32-H2 runs OpenThread Network Co-Processor firmware.
+    OpenThreadNcp,
+    /// ESP32-H2 runs a vendor/custom Thread coprocessor protocol.
+    CustomThreadCoprocessor,
+    /// ESP32-H2 runs a vendor/custom Matter bridge protocol.
+    CustomMatterBridge,
+    /// Firmware mode has not been identified by the application.
+    Unknown,
+}
+
+/// Static Gateway H2 OpenThread transport metadata.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GatewayH2OpenThreadConfig {
+    /// UART baud rate used by the host link.
+    pub baud: u32,
+    /// Maximum frame size downstream buffers should reserve.
+    pub max_frame_size: usize,
+    /// H2 firmware mode expected by the application.
+    pub firmware_mode: GatewayH2FirmwareMode,
+    /// Whether frames are expected to use Spinel HDLC-lite escaping/framing.
+    pub hdlc_lite: bool,
+    /// Whether CRC/FCS is provided by the host framing layer.
+    pub has_crc: bool,
+}
+
+impl GatewayH2OpenThreadConfig {
+    /// Conservative defaults for an ESP32-H2 running OpenThread RCP firmware.
+    pub const OPENTHREAD_RCP: Self = Self {
+        baud: DEFAULT_GATEWAY_H2_BAUD,
+        max_frame_size: DEFAULT_SPINEL_MAX_FRAME_SIZE,
+        firmware_mode: GatewayH2FirmwareMode::OpenThreadRcp,
+        hdlc_lite: true,
+        has_crc: true,
+    };
+}
+
+/// OpenThread device role as reported by an H2 Thread controller backend.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThreadRole {
+    Disabled,
+    Detached,
+    Child,
+    Router,
+    Leader,
+    BorderRouter,
+}
+
+/// High-level Gateway H2 Thread event for custom/non-Spinel H2 firmware.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GatewayH2Event {
+    Ready,
+    Attached(ThreadRole),
+    Detached,
+    DatasetAccepted,
+    DatasetRejected,
+    Error,
+}
+
 /// Async-friendly transport trait for application-owned UART implementations.
 pub trait GatewayH2Transport {
     type Error;
 
     fn send<const N: usize>(&mut self, frame: &H2Frame<N>) -> Result<(), Self::Error>;
     fn poll_receive<const N: usize>(&mut self) -> Result<Option<H2Frame<N>>, Self::Error>;
+}
+
+/// Synchronous Spinel frame transport for OpenThread RCP/NCP firmware.
+///
+/// Implementations should document whether `frame` includes Spinel HDLC-lite
+/// delimiters/escaping/FCS or only the unescaped Spinel payload. For standard
+/// OpenThread RCP UART use, applications typically need HDLC-lite framing and
+/// CRC/FCS handling above the raw UART bytes.
+pub trait GatewayH2SpinelTransport {
+    type Error;
+
+    /// Send one Spinel frame or encoded HDLC-lite frame, depending on implementation docs.
+    fn send_spinel_frame(&mut self, frame: &[u8]) -> Result<(), Self::Error>;
+
+    /// Poll for one received Spinel frame into `out`.
+    ///
+    /// Returns `Ok(None)` when no complete frame is available yet. Returns
+    /// `Ok(Some(len))` when `out[..len]` contains one complete frame.
+    fn poll_spinel_frame(&mut self, out: &mut [u8]) -> Result<Option<usize>, Self::Error>;
+}
+
+/// Async Spinel frame transport for OpenThread RCP/NCP firmware.
+pub trait AsyncGatewayH2SpinelTransport {
+    type Error;
+
+    /// Send one Spinel frame or encoded HDLC-lite frame, depending on implementation docs.
+    fn send_spinel_frame(
+        &mut self,
+        frame: &[u8],
+    ) -> impl core::future::Future<Output = Result<(), Self::Error>>;
+
+    /// Receive one complete Spinel frame into `out`, applying implementation-defined timeout policy.
+    fn receive_spinel_frame(
+        &mut self,
+        out: &mut [u8],
+    ) -> impl core::future::Future<Output = Result<usize, Self::Error>>;
+}
+
+/// Higher-level Thread controller trait for H2 firmware that does not expose Spinel.
+pub trait GatewayH2ThreadController {
+    type Error;
+
+    fn is_ready(&mut self) -> Result<bool, Self::Error>;
+    fn set_active_dataset(&mut self, dataset_tlv: &[u8]) -> Result<(), Self::Error>;
+    fn attach(&mut self) -> Result<(), Self::Error>;
+    fn detach(&mut self) -> Result<(), Self::Error>;
+    fn role(&mut self) -> Result<ThreadRole, Self::Error>;
+    fn poll_event(&mut self, out: &mut [u8]) -> Result<Option<GatewayH2Event>, Self::Error>;
 }
 
 pub const fn checksum(bytes: &[u8]) -> u8 {

@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/core-s3",
     "examples/hello_world",
+    "examples/downstream_esp_hal_112",
     "examples/dirty_regions",
     "examples/dual_core",
     "examples/gateway_h2",
@@ -32,19 +33,23 @@ keywords = ["esp32s3", "embedded", "m5stack", "cores3", "no-std"]
 categories = ["embedded", "hardware-support", "no-std"]
 
 [workspace.dependencies]
-core-s3 = { path = "crates/core-s3", version = "0.3.1" }
+core-s3 = { path = "crates/core-s3", version = "0.4.0" }
 critical-section = "1.2.0"
 defmt = "1.0.1"
 embedded-graphics = { version = "0.8.2", default-features = false }
 embedded-hal = { version = "1.0.0", default-features = false }
 embedded-hal-async = { version = "1.0.0", default-features = false }
 embedded-hal-bus = { version = "0.3.0", default-features = false }
-esp-alloc = { version = "0.11.0", default-features = true, features = ["esp32s3"] }
-
-esp-backtrace = { version = "0.20.0", default-features = false, features = ["esp32s3", "panic-handler", "println"] }
-esp-bootloader-esp-idf = { version = "0.6.0", default-features = false, features = ["esp32s3"] }
-esp-hal = { version = "1.2.0", default-features = false, features = ["esp32s3", "rt", "unstable"] }
-esp-println = { version = "0.18.0", default-features = false, features = ["esp32s3", "jtag-serial"] }
+embedded-sdmmc = { version = "0.8.1", default-features = false }
+esp-alloc = { version = "=0.10.0", default-features = true, features = ["esp32s3"] }
+esp-backtrace = { version = "=0.17.0", default-features = false, features = ["esp32s3", "panic-handler", "println"] }
+esp-bootloader-esp-idf = { version = "0.5.0", default-features = false, features = ["esp32s3"] }
+esp-hal = { version = "=1.1.2", default-features = false, features = ["esp32s3", "rt", "unstable"] }
+esp-println = { version = "=0.15.0", default-features = false, features = ["esp32s3", "jtag-serial"] }
+esp-radio = { version = "=1.0.0-beta.0", default-features = false, features = ["esp32s3"] }
+esp-radio-rtos-driver = { version = "=0.3.0", default-features = false }
+esp-rom-sys = { version = "=0.1.4", default-features = false }
+esp-storage = { version = "=0.7.0", default-features = false, features = ["esp32s3"] }
 heapless = { version = "0.9.3", default-features = false }
 
 static_cell = "2.1.1"

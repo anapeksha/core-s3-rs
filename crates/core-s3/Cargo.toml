@@ -1,6 +1,6 @@
 [package]
 name = "core-s3"
-version = "0.3.1"
+version = "0.4.0"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -16,15 +16,18 @@ categories.workspace = true
 [features]
 default = []
 defmt = ["dep:defmt", "heapless/defmt"]
-esp-hal = ["dep:embedded-hal-bus", "dep:esp-hal"]
+esp-hal = ["dep:critical-section", "dep:embedded-hal-bus", "dep:esp-hal"]
+sdmmc = ["dep:embedded-sdmmc"]
 gateway-h2 = []
 
 [dependencies]
+critical-section = { workspace = true, optional = true }
 defmt = { workspace = true, optional = true }
 embedded-graphics.workspace = true
 embedded-hal.workspace = true
 embedded-hal-async.workspace = true
 embedded-hal-bus = { workspace = true, optional = true }
+embedded-sdmmc = { workspace = true, optional = true }
 heapless.workspace = true
 
 
