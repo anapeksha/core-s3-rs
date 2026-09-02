@@ -12,15 +12,16 @@ The crate is intentionally `#![no_std]` and keeps the reusable BSP layer modular
 - BMI270/BMM150 motion/orientation helpers
 - BM8563 RTC helpers with small `no_std` date/time types
 - ES7210/AW88298 audio configuration helpers
-- feature-gated Gateway H2 UART/framing transport behind `gateway-h2`
+- feature-gated Gateway H2 UART/framing/OpenThread transport surfaces and Spinel HDLC-lite codec behind `gateway-h2`
+- optional TF-card SD parts compatible with `embedded-sdmmc`
 
-> Hardware note: v0.3.0 expands the BSP surface significantly. Display bring-up was validated in v0.2.0. New sensor/audio/power drivers are register-level BSP foundations cross-checked against the official M5Stack CoreS3 docs and should be smoke-tested on your exact CoreS3 hardware before production use.
+> Hardware note: v0.4.0 keeps the default ESP32-S3 path on the current stable downstream stack around `esp-hal = "=1.1.2"`. Display, touch, battery, motion, compass, RTC, audio, and Gateway H2 examples were smoke-tested during v0.3 development. The new shared LCD/TF-card SPI API is compile-validated; real SD block/filesystem access and Gateway H2 OpenThread firmware behavior still require hardware validation in the consuming firmware.
 
 ## Peripheral support
 
-| Peripheral            | Address / pins                                                        | v0.3 support                                                                                                             |
+| Peripheral            | Address / pins                                                        | Support                                                                                                                  |
 | --------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| ILI9342C SPI LCD      | MOSI GPIO37, SCLK GPIO36, CS GPIO3, D/C GPIO35, TF CS GPIO4 held high | init, RGB565 drawing, clipping, rotation/MADCTL, dirty-region blits                                                      |
+| ILI9342C SPI LCD      | MOSI GPIO37, SCLK GPIO36, CS GPIO3, D/C GPIO35, TF CS GPIO4 held high | init, RGB565 drawing, clipping, rotation/MADCTL, dirty-region blits, shared-SPI initializer                              |
 | FT6336U touch         | I2C `0x38` on SDA GPIO12/SCL GPIO11                                   | touch report parsing, down/up/move, gestures, rotation mapping, hit testing                                              |
 | AXP2101 PMIC          | I2C `0x34`                                                            | CoreS3 defaults, backlight rail, battery voltage/status helpers, shutdown/sleep prep                                     |
 | AW9523B expander      | I2C `0x58`                                                            | CoreS3 defaults and safe output helpers, LCD reset pin helper                                                            |
@@ -29,13 +30,15 @@ The crate is intentionally `#![no_std]` and keeps the reusable BSP layer modular
 | BM8563 RTC            | I2C `0x51`                                                            | get/set date-time, alarms, timer metadata                                                                                |
 | ES7210 microphone ADC | I2C `0x40`, I2S GPIO0/34/33/13/14                                     | configuration helper; I2S DMA remains app/HAL-owned                                                                      |
 | AW88298 speaker amp   | I2C `0x36`, I2S GPIO0/34/33/13/14                                     | configuration helper; I2S DMA remains app/HAL-owned                                                                      |
-| Gateway H2            | UART1, TX GPIO1, RX GPIO2, 115200 baud                                | UART bring-up plus small request/response/event framing layer                                                            |
+| Gateway H2            | UART1, TX GPIO1, RX GPIO2, 115200 baud                                | UART bring-up, small request/response/event framing, OpenThread/Spinel transport traits, and Spinel HDLC-lite codec      |
+| TF-card slot          | SCLK GPIO36, MOSI GPIO37, MISO GPIO35, CS GPIO4                       | slot metadata, card-detect helper, shared-SPI `SpiDevice` parts, optional `embedded-sdmmc::SdCard` conversion            |
 
 ## Repository layout
 
 ```text
 crates/core-s3/                    no_std BSP crate
 examples/hello_world/             basic LCD validation
+examples/downstream_esp_hal_112/   downstream compatibility build for esp-hal 1.1.2
 examples/dirty_regions/           dirty-region animation
 examples/dual_core/               PRO CPU + APP CPU example
 examples/gateway_h2/              Gateway H2 UART scaffold
@@ -53,17 +56,18 @@ examples/full_board_demo/         board overview smoke-test shell
 
 ## Features
 
-| Feature      | Description                                                                                                                  |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| `defmt`      | Enables `defmt` formatting for supported dependency-free public types.                                                       |
-| `esp-hal`    | Enables ESP-HAL-backed CoreS3 bring-up helpers on Xtensa ESP32-S3 targets.                                                   |
-| `gateway-h2` | Exposes `core_s3::gateway_h2`, Gateway H2 metadata, UART bring-up, Matter/Thread config types, and the H2 framing transport. |
+| Feature      | Description                                                                                                                                                                                |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `defmt`      | Enables `defmt` formatting for supported dependency-free public types.                                                                                                                     |
+| `esp-hal`    | Enables ESP-HAL-backed CoreS3 bring-up helpers on Xtensa ESP32-S3 targets.                                                                                                                 |
+| `gateway-h2` | Exposes `core_s3::gateway_h2`, Gateway H2 metadata, UART bring-up, Matter/Thread config types, H2 framing, OpenThread/Spinel transport traits, and Spinel HDLC-lite encode/decode helpers. |
+| `sdmmc`      | Enables conversion from BSP SD parts into `embedded_sdmmc::SdCard<SPI, DELAY>`.                                                                                                            |
 
 ## Minimal display example
 
 ```rust
-use core_s3::{CoreS3, bsp::CoreS3DisplayResources};
-use embedded_graphics::pixelcolor::Rgb565;
+use core_s3::{CoreS3, bsp::CoreS3DisplayResources, ui::{Label, Theme}};
+use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
 
 let mut parts = CoreS3::init_display(CoreS3DisplayResources {
     i2c0: peripherals.I2C0,
@@ -77,7 +81,13 @@ let mut parts = CoreS3::init_display(CoreS3DisplayResources {
     tf_card_cs: peripherals.GPIO4,
 })?;
 
-parts.display.draw_validation_screen("CoreS3", "LCD ready", Rgb565::CYAN)?;
+parts.display.clear(Rgb565::BLACK)?;
+Label {
+    text: "LCD ready",
+    top_left: Point::new(24, 48),
+    color: Rgb565::CYAN,
+}
+.draw(&mut parts.display)?;
 ```
 
 ## Widgets and dirty-region sprite
@@ -95,9 +105,28 @@ parts.display.draw_validation_screen("CoreS3", "LCD ready", Rgb565::CYAN)?;
 - `StatusBar`
 - `Menu`
 
+## Shared LCD + TF-card SPI
+
+CoreS3 routes the LCD and TF-card socket through the same SPI signal group:
+
+```text
+SPI2
+SCLK GPIO36
+MOSI GPIO37
+MISO GPIO35
+LCD CS GPIO3
+TF CS GPIO4
+```
+
+For firmware that needs both devices, use `CoreS3::init_shared_spi`, store the returned `CoreS3SharedSpiParts` in a `static_cell::StaticCell`, then create the LCD and SD chip-select devices independently with `CoreS3::init_display_on_shared_spi` and `CoreS3::init_sd_on_shared_spi`.
+
+Important limitation: GPIO35 is physically shared as LCD D/C during display writes and TF-card MISO during SD reads. The v0.4 API avoids consuming TF CS in display init and exposes an `embedded_hal::spi::SpiDevice` plus slot metadata for SD stacks, but real SD block transfers on shared display hardware still need firmware-level validation of the GPIO35 mode-switching behavior for the selected `esp-hal` version.
+
+With feature `sdmmc`, `CoreS3SdParts::into_sdmmc()` returns an `embedded_sdmmc::SdCard<SPI, DELAY>`. The BSP intentionally does not provide credential/token/secret abstractions or encryption; downstream firmware should encrypt sensitive bytes before writing them to SD.
+
 ## Matter / Gateway H2 scope
 
-The BSP does **not** implement Matter, Thread, Zigbee, OpenThread CLI, or Spinel. It provides Gateway H2 metadata, CoreS3-side UART bring-up, and a small framing layer suitable for a higher-level application protocol later.
+The BSP does **not** implement Matter, Thread, Zigbee, OpenThread CLI, or the OpenThread state machine. M5Stack's Gateway H2 Thread Border Router documentation builds ESP-IDF's `examples/openthread/ot_rcp` firmware for the ESP32-H2 module, so `core_s3::gateway_h2::spinel` provides the bounded Spinel HDLC-lite byte-stuffing/FCS codec needed by downstream OpenThread host integrations. The downstream application still owns OpenThread host integration, Matter commissioning/runtime, and protocol policy.
 
 Consumer firmware should own:
 
@@ -110,10 +139,24 @@ Consumer firmware should own:
 
 ## Building
 
+The default ESP32-S3 build is kept compatible with:
+
+```toml
+esp-hal = "=1.1.2"
+esp-println = "=0.15.0"
+esp-backtrace = "=0.17.0"
+esp-rom-sys = "=0.1.4"
+esp-alloc = "=0.10.0"
+esp-radio = "=1.0.0-beta.0"
+esp-radio-rtos-driver = "=0.3.0"
+esp-storage = "=0.7.0"
+embedded-hal = "1.0"
+```
+
 Install the ESP Rust toolchain with [`espup`](https://github.com/esp-rs/espup), then:
 
 ```sh
-cargo +esp check --workspace --all-features --target xtensa-esp32s3-none-elf
+cargo +esp check --workspace --all-features --release --target xtensa-esp32s3-none-elf
 cargo +esp build -p display_widgets --release --target xtensa-esp32s3-none-elf
 cargo +esp build -p full_board_demo --release --target xtensa-esp32s3-none-elf
 ```
@@ -126,12 +169,20 @@ cargo +esp run -p display_widgets --release --target xtensa-esp32s3-none-elf
 
 `Embed.toml` is configured for ESP32-S3 JTAG. GDB is enabled so dynamic examples continue running while the probe session remains attached.
 
+## v0.4 migration notes
+
+- Update dependencies from `core-s3 = "0.3"` to `core-s3 = "0.4"`.
+- ESP-HAL users should pin to the supported `esp-hal = "=1.1.2"` family unless they explicitly opt into and validate a newer stack in their application.
+- Existing `CoreS3::init_display` remains available for display-only firmware.
+- Firmware that needs both LCD and TF-card access should migrate to `CoreS3::init_shared_spi`, `CoreS3::init_display_on_shared_spi`, and `CoreS3::init_sd_on_shared_spi`.
+- Use feature `sdmmc` if you want BSP SD parts to convert directly into `embedded_sdmmc::SdCard`.
+- Gateway H2 Matter/Thread config types remain configuration-only. Use `gateway_h2::transport` for H2 framing and OpenThread transport traits, and use `gateway_h2::spinel` for the Spinel HDLC-lite codec when the H2 is flashed with ESP-IDF OpenThread RCP firmware.
+- Full Matter server/runtime code still belongs in consumer applications, not this BSP.
+
 ## v0.3 migration notes
 
 - Update dependencies from `core-s3 = "0.2"` to `core-s3 = "0.3"`.
 - `BatteryStatus` now includes percentage estimate, charge state, external-power state, and low-battery state. Code using the old `{ millivolts, state }` fields should migrate to `charge_state` and the richer status fields.
-- Gateway H2 Matter/Thread config types remain configuration-only. Use `gateway_h2::transport` for the new BSP framing layer if your H2 firmware has a compatible host protocol.
-- Full Matter server/runtime code still belongs in consumer applications, not this BSP.
 
 ## Unsupported / application-owned functionality
 

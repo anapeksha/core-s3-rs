@@ -6,6 +6,8 @@
 //! shared bus at the HAL layer. The card-detect switch is exposed through
 //! AW9523B port 0 bit 4 and is active-low, matching the official M5Stack demo.
 
+use embedded_hal::{delay::DelayNs, spi::SpiDevice};
+
 use crate::pins::SpiSdPins;
 
 /// Default SPI clock used by M5Stack's CoreS3 SD demo.
@@ -58,6 +60,80 @@ impl SdCardDetect {
     pub const fn present_from_port_value(self, value: u8) -> bool {
         let high = (value & (1 << self.bit)) != 0;
         if self.active_low { !high } else { high }
+    }
+}
+
+/// Runtime SD-slot metadata exposed to downstream storage stacks.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CoreS3SdSlot {
+    /// SPI SCLK GPIO number.
+    pub sclk_gpio: u8,
+    /// SPI MOSI/COPI/CMD GPIO number.
+    pub mosi_gpio: u8,
+    /// SPI MISO/CIPO/D0 GPIO number. On CoreS3 this is also the LCD D/C pad.
+    pub miso_gpio: u8,
+    /// TF-card chip-select GPIO number.
+    pub cs_gpio: u8,
+    /// Maximum SPI frequency used by the official M5Stack SD example.
+    pub max_frequency_hz: u32,
+    /// Optional direct card-detect GPIO. CoreS3 uses AW9523B instead, so this is `None`.
+    pub card_detect_gpio: Option<u8>,
+    /// Optional direct power-enable GPIO. CoreS3 SD power is board-managed, so this is `None`.
+    pub power_enable_gpio: Option<u8>,
+}
+
+impl CoreS3SdSlot {
+    /// Onboard CoreS3 TF-card slot metadata.
+    pub const CORE_S3: Self = Self {
+        sclk_gpio: 36,
+        mosi_gpio: 37,
+        miso_gpio: 35,
+        cs_gpio: 4,
+        max_frequency_hz: DEFAULT_SPI_HZ,
+        card_detect_gpio: None,
+        power_enable_gpio: None,
+    };
+}
+
+impl From<SdCardSlot> for CoreS3SdSlot {
+    fn from(slot: SdCardSlot) -> Self {
+        Self {
+            sclk_gpio: slot.spi.sclk.0,
+            mosi_gpio: slot.spi.mosi.0,
+            miso_gpio: slot.spi.miso.0,
+            cs_gpio: slot.spi.cs.0,
+            max_frequency_hz: slot.spi_hz,
+            card_detect_gpio: None,
+            power_enable_gpio: None,
+        }
+    }
+}
+
+/// Low-level SD resources returned by ESP-HAL BSP helpers.
+///
+/// `spi_device` implements [`embedded_hal::spi::SpiDevice`] and can be passed to
+/// `embedded_sdmmc::SdCard::new(spi_device, delay)` by downstream firmware. The
+/// BSP intentionally does not add Wi-Fi credential, token, or application-secret
+/// abstractions; applications should encrypt sensitive bytes before writing them.
+pub struct CoreS3SdParts<SPI, DELAY> {
+    /// Chip-select scoped SPI device for the TF-card socket.
+    pub spi_device: SPI,
+    /// Delay provider suitable for SD-card initialization.
+    pub delay: DELAY,
+    /// Static CoreS3 TF-card slot metadata.
+    pub slot: CoreS3SdSlot,
+}
+
+impl<SPI, DELAY> CoreS3SdParts<SPI, DELAY>
+where
+    SPI: SpiDevice,
+    DELAY: DelayNs,
+{
+    /// Convert these parts into an `embedded-sdmmc` SD-card block device.
+    #[cfg(feature = "sdmmc")]
+    pub fn into_sdmmc(self) -> embedded_sdmmc::SdCard<SPI, DELAY> {
+        embedded_sdmmc::SdCard::new(self.spi_device, self.delay)
     }
 }
 
