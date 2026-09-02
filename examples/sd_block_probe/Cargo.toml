@@ -1,0 +1,19 @@
+[package]
+name = "sd_block_probe"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[dependencies]
+core-s3 = { workspace = true, features = ["esp-hal", "sdmmc"] }
+embedded-graphics.workspace = true
+embedded-sdmmc.workspace = true
+esp-backtrace.workspace = true
+esp-bootloader-esp-idf.workspace = true
+esp-hal.workspace = true
+esp-println.workspace = true
+heapless.workspace = true
+static_cell.workspace = true
+
+[lints]
+workspace = true

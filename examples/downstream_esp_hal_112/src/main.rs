@@ -43,7 +43,8 @@ fn main() -> ! {
         tf_card_cs: peripherals.GPIO4,
     })
     .expect("TF card SPI device on shared SPI");
-    let _sd_card = sd_parts.into_sdmmc();
+    let sd_card = sd_parts.into_sdmmc();
+    let _capacity_probe = sd_card.num_bytes();
 
     let h2_parts = CoreS3::init_gateway_h2_openthread(CoreS3GatewayH2Resources {
         uart1: peripherals.UART1,
