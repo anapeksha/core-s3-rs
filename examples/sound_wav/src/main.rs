@@ -21,8 +21,9 @@ use esp_backtrace as _;
 use esp_hal::{
     Blocking,
     delay::Delay,
-    dma_buffers,
-    i2s::master::{Channels, Config, DataFormat, I2s, I2sTx},
+    dma::DmaTxBuf,
+    dma_tx_buffer,
+    i2s::master::{Channels, DataFormat, I2s, I2sTx, TdmConfig},
     time::{Duration, Rate},
 };
 use heapless::String;
@@ -107,11 +108,16 @@ fn main() -> ! {
 
     draw_static_info(display, aw_probe, aw_init, aw_volume);
 
-    let (_, _, tx_buffer, tx_descriptors) = dma_buffers!(0, 4092);
+    let Ok(mut tx_buffer) = dma_tx_buffer!(4092) else {
+        draw_i2s_error(display);
+        loop {
+            core::hint::spin_loop();
+        }
+    };
     let Ok(i2s) = I2s::new(
         peripherals.I2S1,
         peripherals.DMA_CH1,
-        Config::new_tdm_philips()
+        TdmConfig::new_tdm_philips()
             .with_sample_rate(Rate::from_hz(SAMPLE_RATE_HZ))
             .with_data_format(DataFormat::Data16Channel16)
             .with_channels(Channels::STEREO),
@@ -127,7 +133,7 @@ fn main() -> ! {
         .with_bclk(peripherals.GPIO34)
         .with_ws(peripherals.GPIO33)
         .with_dout(peripherals.GPIO13)
-        .build(tx_descriptors);
+        .build();
 
     let mut sprite = SoundSprite::new(Rgb565::BLACK).expect("valid sound sprite");
     let mut sound_index = 0usize;
@@ -139,7 +145,19 @@ fn main() -> ! {
         draw_sound_state(display, &mut sprite, sound.name, play_count, true);
 
         let played = if let Ok(mut wav) = WavPcm16::new(sound.wav) {
-            play_source(&mut i2s_tx, tx_buffer, &mut wav)
+            match play_source(i2s_tx, tx_buffer, &mut wav) {
+                Some((next_i2s_tx, next_tx_buffer, played)) => {
+                    i2s_tx = next_i2s_tx;
+                    tx_buffer = next_tx_buffer;
+                    played
+                }
+                None => {
+                    draw_sound_state(display, &mut sprite, sound.name, play_count, false);
+                    loop {
+                        core::hint::spin_loop();
+                    }
+                }
+            }
         } else {
             false
         };
@@ -239,30 +257,38 @@ fn draw_sound_state<T>(
     sprite.flush_dirty_at(display, SPRITE_ORIGIN).ok();
 }
 
-fn play_source<T>(i2s_tx: &mut I2sTx<'_, Blocking>, tx_buffer: &mut [u8], source: &mut T) -> bool
+fn play_source<'d, T>(
+    mut i2s_tx: I2sTx<'d, Blocking>,
+    mut tx_buffer: DmaTxBuf,
+    source: &mut T,
+) -> Option<(I2sTx<'d, Blocking>, DmaTxBuf, bool)>
 where
     T: AudioSource,
 {
     let mut any_audio = false;
     loop {
-        let has_more = fill_stereo_i16_buffer(tx_buffer, source);
+        let has_more = fill_stereo_i16_buffer(tx_buffer.as_mut_slice(), source);
+        tx_buffer.set_length(tx_buffer.capacity());
         if !has_more && any_audio {
             break;
         }
         any_audio |= has_more;
 
-        let Ok(transfer) = i2s_tx.write_dma(&tx_buffer) else {
-            return false;
+        let Ok(transfer) = i2s_tx.write(tx_buffer) else {
+            return None;
         };
-        if transfer.wait().is_err() {
-            return false;
+        let (result, next_i2s_tx, next_tx_buffer) = transfer.wait();
+        if result.is_err() {
+            return None;
         }
+        i2s_tx = next_i2s_tx;
+        tx_buffer = next_tx_buffer;
 
         if !has_more {
             break;
         }
     }
-    any_audio
+    Some((i2s_tx, tx_buffer, any_audio))
 }
 
 fn fill_stereo_i16_buffer<T>(buffer: &mut [u8], source: &mut T) -> bool
