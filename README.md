@@ -12,7 +12,7 @@ The crate is intentionally `#![no_std]` and keeps the reusable BSP layer modular
 - BMI270/BMM150 motion/orientation helpers
 - BM8563 RTC helpers with small `no_std` date/time types
 - ES7210/AW88298 audio configuration helpers
-- feature-gated Gateway H2 UART/framing/OpenThread transport surfaces behind `gateway-h2`
+- feature-gated Gateway H2 UART/framing/OpenThread transport surfaces and Spinel HDLC-lite codec behind `gateway-h2`
 - optional TF-card SD parts compatible with `embedded-sdmmc`
 
 > Hardware note: v0.4.0 keeps the default ESP32-S3 path on the current stable downstream stack around `esp-hal = "=1.1.2"`. Display, touch, battery, motion, compass, RTC, audio, and Gateway H2 examples were smoke-tested during v0.3 development. The new shared LCD/TF-card SPI API is compile-validated; real SD block/filesystem access and Gateway H2 OpenThread firmware behavior still require hardware validation in the consuming firmware.
@@ -30,7 +30,7 @@ The crate is intentionally `#![no_std]` and keeps the reusable BSP layer modular
 | BM8563 RTC            | I2C `0x51`                                                            | get/set date-time, alarms, timer metadata                                                                                |
 | ES7210 microphone ADC | I2C `0x40`, I2S GPIO0/34/33/13/14                                     | configuration helper; I2S DMA remains app/HAL-owned                                                                      |
 | AW88298 speaker amp   | I2C `0x36`, I2S GPIO0/34/33/13/14                                     | configuration helper; I2S DMA remains app/HAL-owned                                                                      |
-| Gateway H2            | UART1, TX GPIO1, RX GPIO2, 115200 baud                                | UART bring-up, small request/response/event framing, and protocol-neutral OpenThread/Spinel transport traits             |
+| Gateway H2            | UART1, TX GPIO1, RX GPIO2, 115200 baud                                | UART bring-up, small request/response/event framing, OpenThread/Spinel transport traits, and Spinel HDLC-lite codec      |
 | TF-card slot          | SCLK GPIO36, MOSI GPIO37, MISO GPIO35, CS GPIO4                       | slot metadata, card-detect helper, shared-SPI `SpiDevice` parts, optional `embedded-sdmmc::SdCard` conversion            |
 
 ## Repository layout
@@ -56,12 +56,12 @@ examples/full_board_demo/         board overview smoke-test shell
 
 ## Features
 
-| Feature      | Description                                                                                                                                        |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `defmt`      | Enables `defmt` formatting for supported dependency-free public types.                                                                             |
-| `esp-hal`    | Enables ESP-HAL-backed CoreS3 bring-up helpers on Xtensa ESP32-S3 targets.                                                                         |
-| `gateway-h2` | Exposes `core_s3::gateway_h2`, Gateway H2 metadata, UART bring-up, Matter/Thread config types, H2 framing, and OpenThread/Spinel transport traits. |
-| `sdmmc`      | Enables conversion from BSP SD parts into `embedded_sdmmc::SdCard<SPI, DELAY>`.                                                                    |
+| Feature      | Description                                                                                                                                                                                |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `defmt`      | Enables `defmt` formatting for supported dependency-free public types.                                                                                                                     |
+| `esp-hal`    | Enables ESP-HAL-backed CoreS3 bring-up helpers on Xtensa ESP32-S3 targets.                                                                                                                 |
+| `gateway-h2` | Exposes `core_s3::gateway_h2`, Gateway H2 metadata, UART bring-up, Matter/Thread config types, H2 framing, OpenThread/Spinel transport traits, and Spinel HDLC-lite encode/decode helpers. |
+| `sdmmc`      | Enables conversion from BSP SD parts into `embedded_sdmmc::SdCard<SPI, DELAY>`.                                                                                                            |
 
 ## Minimal display example
 
@@ -126,7 +126,7 @@ With feature `sdmmc`, `CoreS3SdParts::into_sdmmc()` returns an `embedded_sdmmc::
 
 ## Matter / Gateway H2 scope
 
-The BSP does **not** implement Matter, Thread, Zigbee, OpenThread CLI, or Spinel. It provides Gateway H2 metadata, CoreS3-side UART bring-up, small H2 framing, and protocol-neutral OpenThread/Spinel transport traits for downstream stacks.
+The BSP does **not** implement Matter, Thread, Zigbee, OpenThread CLI, or the OpenThread state machine. M5Stack's Gateway H2 Thread Border Router documentation builds ESP-IDF's `examples/openthread/ot_rcp` firmware for the ESP32-H2 module, so `core_s3::gateway_h2::spinel` provides the bounded Spinel HDLC-lite byte-stuffing/FCS codec needed by downstream OpenThread host integrations. The downstream application still owns OpenThread host integration, Matter commissioning/runtime, and protocol policy.
 
 Consumer firmware should own:
 
@@ -176,7 +176,7 @@ cargo +esp run -p display_widgets --release --target xtensa-esp32s3-none-elf
 - Existing `CoreS3::init_display` remains available for display-only firmware.
 - Firmware that needs both LCD and TF-card access should migrate to `CoreS3::init_shared_spi`, `CoreS3::init_display_on_shared_spi`, and `CoreS3::init_sd_on_shared_spi`.
 - Use feature `sdmmc` if you want BSP SD parts to convert directly into `embedded_sdmmc::SdCard`.
-- Gateway H2 Matter/Thread config types remain configuration-only. Use `gateway_h2::transport` for H2 framing and the new Spinel/OpenThread transport traits if your H2 firmware exposes a compatible protocol.
+- Gateway H2 Matter/Thread config types remain configuration-only. Use `gateway_h2::transport` for H2 framing and OpenThread transport traits, and use `gateway_h2::spinel` for the Spinel HDLC-lite codec when the H2 is flashed with ESP-IDF OpenThread RCP firmware.
 - Full Matter server/runtime code still belongs in consumer applications, not this BSP.
 
 ## v0.3 migration notes

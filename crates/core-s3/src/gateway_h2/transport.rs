@@ -6,7 +6,8 @@
 //! The BSP does **not** implement Matter, Thread, Zigbee, OpenThread, or Spinel
 //! protocol logic. Gateway H2 firmware must be explicitly selected and validated
 //! by the application. If the attached ESP32-H2 runs OpenThread RCP firmware,
-//! downstream code can implement [`GatewayH2SpinelTransport`] over the UART.
+//! downstream code can implement [`GatewayH2SpinelTransport`] over the UART
+//! using [`crate::gateway_h2::spinel`] for HDLC-lite byte-stuffing and FCS.
 
 use heapless::Vec;
 
@@ -200,10 +201,9 @@ pub trait GatewayH2Transport {
 
 /// Synchronous Spinel frame transport for OpenThread RCP/NCP firmware.
 ///
-/// Implementations should document whether `frame` includes Spinel HDLC-lite
-/// delimiters/escaping/FCS or only the unescaped Spinel payload. For standard
-/// OpenThread RCP UART use, applications typically need HDLC-lite framing and
-/// CRC/FCS handling above the raw UART bytes.
+/// For standard OpenThread RCP UART use, implementations should pass unescaped
+/// Spinel payloads through [`crate::gateway_h2::spinel`] before writing bytes to
+/// UART and should feed UART bytes into the same codec before returning frames.
 pub trait GatewayH2SpinelTransport {
     type Error;
 
