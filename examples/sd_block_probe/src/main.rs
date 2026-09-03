@@ -7,8 +7,8 @@ use core_s3::{
     CoreS3,
     aw9523b::{Aw9523b, Port},
     bsp::{
-        CoreS3DisplayOnSharedSpiResources, CoreS3SdOnSharedSpiResources, CoreS3SharedSpiParts,
-        CoreS3SharedSpiResources,
+        CoreS3DisplayOnPoweredSharedSpiResources, CoreS3InternalI2cResources,
+        CoreS3SdOnSharedSpiResources, CoreS3SharedSpiParts, CoreS3SharedSpiResources,
     },
     display::DirtySprite,
     sd,
@@ -49,26 +49,51 @@ fn main() -> ! {
     .expect("shared LCD/TF SPI");
     let shared_spi = SHARED_SPI.init(shared_spi);
 
-    let mut display_parts = CoreS3::init_display_on_shared_spi(CoreS3DisplayOnSharedSpiResources {
-        shared_spi,
-        i2c0: peripherals.I2C0,
-        i2c_sda: peripherals.GPIO12,
-        i2c_scl: peripherals.GPIO11,
-        lcd_cs: peripherals.GPIO3,
-    })
-    .expect("display on shared SPI");
-
-    let mut aw9523 = Aw9523b::new(display_parts.internal_i2c);
-    let p0 = aw9523.read_input_port(Port::P0).ok();
-    let present = p0.map(sd::core_s3_card_present_from_aw9523_p0);
-
-    let sd_parts = CoreS3::init_sd_on_shared_spi(CoreS3SdOnSharedSpiResources {
+    let mut sd_parts = CoreS3::init_sd_on_shared_spi(CoreS3SdOnSharedSpiResources {
         shared_spi,
         tf_card_cs: peripherals.GPIO4,
     })
     .expect("SD SPI device");
+
+    let mut internal_i2c = CoreS3::init_internal_i2c(CoreS3InternalI2cResources {
+        i2c0: peripherals.I2C0,
+        i2c_sda: peripherals.GPIO12,
+        i2c_scl: peripherals.GPIO11,
+    })
+    .expect("internal I2C");
+    CoreS3::init_core_s3_power(&mut internal_i2c).expect("CoreS3 power rails");
+    CoreS3::power_cycle_tf_card_rail(&mut internal_i2c).expect("TF card rail power-cycle");
+    sd_parts
+        .spi_device
+        .prepare_for_card_acquire()
+        .expect("SD acquire prep");
+
     let sd_card = sd_parts.into_sdmmc();
     let capacity = sd_card.num_bytes();
+
+    let mut aw9523 = Aw9523b::new(internal_i2c);
+    let p0 = aw9523.read_input_port(Port::P0).ok();
+    let present = p0.map(sd::core_s3_card_present_from_aw9523_p0);
+    let internal_i2c = aw9523.release();
+
+    esp_println::println!("AW9523 P0 input: {}", HexByte(p0));
+    match present {
+        Some(true) => esp_println::println!("Card detect: INSERTED"),
+        Some(false) => esp_println::println!("Card detect: NOT INSERTED"),
+        None => esp_println::println!("Card detect: READ FAILED"),
+    }
+    match capacity {
+        Ok(bytes) => esp_println::println!("SD num_bytes(): {} bytes", bytes),
+        Err(err) => esp_println::println!("SD block probe failed: {:?}", err),
+    }
+
+    let mut display_parts =
+        CoreS3::init_display_on_powered_shared_spi(CoreS3DisplayOnPoweredSharedSpiResources {
+            shared_spi,
+            internal_i2c,
+            lcd_cs: peripherals.GPIO3,
+        })
+        .expect("display on powered shared SPI");
 
     let display = &mut display_parts.display;
     display.clear(Rgb565::BLACK).expect("clear");
@@ -101,6 +126,7 @@ fn main() -> ! {
 
     draw_probe_status(&mut sprite, p0, present, capacity);
     sprite.flush_dirty_at(display, SPRITE_ORIGIN).ok();
+    esp_println::println!("LCD after SD probe: OK");
 
     loop {
         core::hint::spin_loop();

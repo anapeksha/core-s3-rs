@@ -28,7 +28,7 @@ M5Stack's official CoreS3 documentation is the source of truth for the shared LC
 | LCD ILI9342C | MOSI GPIO37, SCK GPIO36, CS GPIO3, D/C GPIO35  |
 | TF card      | MISO GPIO35, MOSI GPIO37, SCK GPIO36, CS GPIO4 |
 
-GPIO35 is therefore a physically shared pad: display writes drive it as LCD D/C, while SD reads need it as SPI MISO. The `core-s3` v0.4.1 BSP configures SPI2 with GPIO35 as MISO and uses a CoreS3-specific shared SD `SpiDevice` to disable the D/C output driver while TF-card CS is active, restoring D/C output before later LCD writes. `examples/sd_card` demonstrates AW9523B card-detect only; `examples/sd_block_probe` performs a real `embedded-sdmmc::SdCard::num_bytes()` probe.
+GPIO35 is therefore a physically shared pad: display writes drive it as LCD D/C, while SD reads need it as SPI MISO. The `core-s3` v0.4.2 BSP configures SPI2 with GPIO35 as MISO, leaves GPIO35 as a pulled-up input for SD acquisition, keeps TF-card CS asserted across `embedded-sdmmc` CMD0 response polling, and restores LCD D/C output only when the display writes. `examples/sd_card` demonstrates AW9523B card-detect only; `examples/sd_block_probe` performs the SD-before-LCD sequence and a real `embedded-sdmmc::SdCard::num_bytes()` probe.
 
 ## Internal buses/devices
 
@@ -54,4 +54,4 @@ The `gateway-h2` feature exposes `core_s3::gateway_h2::matter`, which combines G
 - Confirm backlight/reset control path through AXP2101/AW9523B.
 - Probe I²C addresses with a scanner example before enabling high-level drivers.
 - Confirm Gateway H2 Grove UART wiring and optional reset/boot pins for the exact stack/base revision.
-- Validate `examples/sd_block_probe` on real CoreS3 hardware with an inserted valid TF card when changing shared SPI/GPIO35 behavior.
+- Validate `examples/sd_block_probe` on real CoreS3 hardware with an inserted valid TF card when changing shared SPI/GPIO35 behavior, including flash/cold-boot/reset with the card already inserted.

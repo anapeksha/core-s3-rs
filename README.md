@@ -15,7 +15,7 @@ The crate is intentionally `#![no_std]` and keeps the reusable BSP layer modular
 - feature-gated Gateway H2 UART/framing/OpenThread transport surfaces and Spinel HDLC-lite codec behind `gateway-h2`
 - optional TF-card SD parts compatible with `embedded-sdmmc`
 
-> Hardware note: v0.4.1 keeps the default ESP32-S3 path on the current stable downstream stack around `esp-hal = "=1.1.2"`. Display, touch, battery, motion, compass, RTC, audio, and Gateway H2 examples were smoke-tested during v0.3 development. The shared LCD/TF-card SPI API now configures GPIO35 as SD MISO and handles the CoreS3 LCD D/C vs TF-card MISO mode switch inside the BSP; real SD media probing still requires hardware with an inserted valid TF card.
+> Hardware note: v0.4.2 keeps the default ESP32-S3 path on the current stable downstream stack around `esp-hal = "=1.1.2"`. Display, touch, battery, motion, compass, RTC, audio, and Gateway H2 examples were smoke-tested during v0.3 development. The shared LCD/TF-card SPI API configures GPIO35 as SD MISO, handles the CoreS3 LCD D/C vs TF-card MISO mode switch inside the BSP, and keeps TF-card CS asserted across CMD0 response polling for reliable pre-inserted-card acquisition.
 
 ## Peripheral support
 
@@ -122,7 +122,11 @@ TF CS GPIO4
 
 For firmware that needs both devices, use `CoreS3::init_shared_spi`, store the returned `CoreS3SharedSpiParts` in a `static_cell::StaticCell`, then create the LCD and SD chip-select devices independently with `CoreS3::init_display_on_shared_spi` and `CoreS3::init_sd_on_shared_spi`.
 
-M5Stack's official CoreS3 PinMap lists LCD D/C on GPIO35 and TF-card MISO on the same GPIO35 pad. In v0.4.1 the BSP configures SPI2 with GPIO35 as MISO and wraps SD access in `CoreS3SharedSdDevice`, which disables the LCD D/C output driver while TF-card CS is active and restores D/C output for later display writes. Downstream firmware can keep using `embedded_hal::spi::SpiDevice` and, with feature `sdmmc`, `CoreS3SdParts::into_sdmmc()` returns an `embedded_sdmmc::SdCard<SPI, DELAY>` suitable for a real `num_bytes()` capacity probe.
+M5Stack's official CoreS3 PinMap lists LCD D/C on GPIO35 and TF-card MISO on the same GPIO35 pad. The BSP configures SPI2 with GPIO35 as MISO and wraps SD access in `CoreS3SharedSdDevice`, which disables the LCD D/C output driver while TF-card CS is active and leaves GPIO35 as a pulled-up MISO input after SD transactions. The LCD D/C facade restores output mode when the display actually writes.
+
+For robust acquisition when a card is already inserted at flash/cold-boot/reset time, initialize and probe SD before LCD SPI traffic: create shared SPI and SD parts, initialize internal I2C, call `CoreS3::init_core_s3_power(...)`, `CoreS3::power_cycle_tf_card_rail(...)`, `sd_parts.spi_device.prepare_for_card_acquire()`, then call `CoreS3SdParts::into_sdmmc()` and `SdCard::num_bytes()`. After the SD probe, initialize the LCD with `CoreS3::init_display_on_powered_shared_spi(...)`.
+
+Downstream firmware can keep using `embedded_hal::spi::SpiDevice` and, with feature `sdmmc`, `CoreS3SdParts::into_sdmmc()` returns an `embedded_sdmmc::SdCard<SPI, DELAY>` suitable for a real `num_bytes()` capacity probe.
 
 The BSP intentionally does not provide credential/token/secret abstractions, fake filesystems, plaintext storage policy, or encryption; downstream firmware should encrypt sensitive bytes before writing them to SD.
 
@@ -174,10 +178,10 @@ cargo +esp run -p display_widgets --release --target xtensa-esp32s3-none-elf
 ## v0.4 migration notes
 
 - Update dependencies from `core-s3 = "0.3"` to `core-s3 = "0.4"`.
-- Prefer `core-s3 = "0.4.1"` or newer for shared LCD + TF-card SPI: v0.4.1 fixes GPIO35 SD MISO configuration and hides LCD D/C vs SD MISO mode switching inside the BSP.
+- Prefer `core-s3 = "0.4.2"` or newer for shared LCD + TF-card SPI: v0.4.2 fixes pre-inserted TF-card acquisition by adding CMD0 CS hold handling, SD-safe GPIO35 defaults, 400 kHz idle clocks, and an ALDO4 power-cycle helper.
 - ESP-HAL users should pin to the supported `esp-hal = "=1.1.2"` family unless they explicitly opt into and validate a newer stack in their application.
 - Existing `CoreS3::init_display` remains available for display-only firmware.
-- Firmware that needs both LCD and TF-card access should migrate to `CoreS3::init_shared_spi`, `CoreS3::init_display_on_shared_spi`, and `CoreS3::init_sd_on_shared_spi`.
+- Firmware that needs both LCD and TF-card access should migrate to `CoreS3::init_shared_spi`, `CoreS3::init_sd_on_shared_spi`, `CoreS3::init_internal_i2c`, `CoreS3::power_cycle_tf_card_rail`, `CoreS3SharedSdDevice::prepare_for_card_acquire`, and `CoreS3::init_display_on_powered_shared_spi` when SD must be acquired before LCD traffic. The older `CoreS3::init_display_on_shared_spi` remains available for display-first code.
 - Use feature `sdmmc` if you want BSP SD parts to convert directly into `embedded_sdmmc::SdCard`.
 - Gateway H2 Matter/Thread config types remain configuration-only. Use `gateway_h2::transport` for H2 framing and OpenThread transport traits, and use `gateway_h2::spinel` for the Spinel HDLC-lite codec when the H2 is flashed with ESP-IDF OpenThread RCP firmware.
 - Full Matter server/runtime code still belongs in consumer applications, not this BSP.
