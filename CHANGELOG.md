@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-09-04
+
+- Fixed CoreS3 TF-card acquisition for cards inserted before flashing, cold boot, or reset by keeping TF-card CS asserted across `embedded-sdmmc` CMD0 command writes and one-byte R1 response polls.
+- Added `CoreS3SharedSdDevice::prepare_for_card_acquire()` to release GPIO35 as pulled-up MISO input, apply SPI mode 0 at 400 kHz, hold TF-card CS high, and send at least 80 idle clocks before SD acquisition.
+- Added split shared-SPI bring-up helpers: `CoreS3InternalI2cResources`, `CoreS3::init_internal_i2c(...)`, `CoreS3::init_core_s3_power(...)`, `CoreS3DisplayOnPoweredSharedSpiResources`, and `CoreS3::init_display_on_powered_shared_spi(...)`.
+- Added `CoreS3::power_cycle_tf_card_rail(...)` for AXP2101 ALDO4 read-modify-write power cycling with hardware-validated off/on delays.
+- Updated `examples/sd_block_probe` and downstream validation to initialize/probe SD before LCD SPI traffic.
+
 ## [0.4.1] - 2026-09-03
 
 - Fixed CoreS3 shared LCD/TF-card SPI initialization to configure GPIO35 as SPI MISO for real SD reads.

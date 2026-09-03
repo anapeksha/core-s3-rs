@@ -18,11 +18,11 @@ use embedded_hal_bus::spi;
 use esp_hal::{
     Blocking,
     delay::Delay,
-    gpio::{AnyPin, Flex, InputConfig, Level, Output, OutputConfig},
+    gpio::{AnyPin, Flex, InputConfig, Level, Output, OutputConfig, Pull},
     i2c::master::{Config as I2cConfig, I2c as EspI2c},
     spi::{
         Mode,
-        master::{Config as SpiConfig, Spi},
+        master::{Config as SpiConfig, ConfigError as SpiConfigError, Spi},
     },
     time::Rate,
     uart::{Config as UartConfig, Uart},
@@ -48,6 +48,10 @@ const AXP_ALDO3_VOLTAGE: u8 = 0x94;
 const AXP_ALDO4_VOLTAGE: u8 = 0x95;
 const AXP_DLDO1_VOLTAGE: u8 = 0x99;
 const AXP_LDO_3V3_CODE: u8 = 33 - 5;
+const AXP_CORES3_LDO_ENABLE_MASK: u8 = 0xBF;
+const AXP_ALDO4_ENABLE_BIT: u8 = 1 << 3;
+const SD_SPI_INIT_HZ: u32 = 400_000;
+const SD_INIT_CLOCKS: [u8; 10] = [0xFF; 10];
 const AW_OUTPUT_P0: u8 = 0x02;
 const AW_OUTPUT_P1: u8 = 0x03;
 const AW_CONFIG_P0: u8 = 0x04;
@@ -106,6 +110,13 @@ pub struct CoreS3SharedSpiParts {
     pub sd_slot: CoreS3SdSlot,
 }
 
+/// ESP-HAL resources required to initialize CoreS3's internal I2C bus.
+pub struct CoreS3InternalI2cResources {
+    pub i2c0: esp_hal::peripherals::I2C0<'static>,
+    pub i2c_sda: esp_hal::peripherals::GPIO12<'static>,
+    pub i2c_scl: esp_hal::peripherals::GPIO11<'static>,
+}
+
 /// ESP-HAL resources required to initialize the CoreS3 LCD.
 pub struct CoreS3DisplayResources {
     pub i2c0: esp_hal::peripherals::I2C0<'static>,
@@ -133,6 +144,13 @@ pub struct CoreS3DisplayOnSharedSpiResources {
     pub i2c0: esp_hal::peripherals::I2C0<'static>,
     pub i2c_sda: esp_hal::peripherals::GPIO12<'static>,
     pub i2c_scl: esp_hal::peripherals::GPIO11<'static>,
+    pub lcd_cs: esp_hal::peripherals::GPIO3<'static>,
+}
+
+/// ESP-HAL resources required to initialize the display after CoreS3 power setup.
+pub struct CoreS3DisplayOnPoweredSharedSpiResources {
+    pub shared_spi: &'static CoreS3SharedSpiParts,
+    pub internal_i2c: CoreS3I2c,
     pub lcd_cs: esp_hal::peripherals::GPIO3<'static>,
 }
 
@@ -219,6 +237,7 @@ impl OutputPin for CoreS3SharedDc {
 #[derive(Debug)]
 pub enum CoreS3SharedSdSpiError {
     Spi(esp_hal::spi::Error),
+    Config(SpiConfigError),
     ChipSelect,
 }
 
@@ -226,6 +245,7 @@ impl SpiErrorTrait for CoreS3SharedSdSpiError {
     fn kind(&self) -> SpiErrorKind {
         match self {
             Self::Spi(error) => SpiErrorTrait::kind(error),
+            Self::Config(_) => SpiErrorKind::Other,
             Self::ChipSelect => SpiErrorKind::ChipSelectFault,
         }
     }
@@ -233,16 +253,20 @@ impl SpiErrorTrait for CoreS3SharedSdSpiError {
 
 /// CoreS3-specific SD `SpiDevice` for the shared LCD/TF SPI bus.
 ///
-/// Each transaction switches GPIO35 from LCD D/C output to SD MISO input before
-/// asserting TF-card CS, performs the requested embedded-hal SPI operations, then
-/// deasserts CS and restores GPIO35 as LCD D/C output. This keeps compatibility
-/// with `embedded_sdmmc::SdCard<SPI, DELAY>` without requiring unsafe code or
-/// manual GPIO mode switching in downstream firmware.
+/// Each SD transaction switches GPIO35 from LCD D/C output to SD MISO input
+/// before asserting TF-card CS and leaves it as an input afterward. The LCD D/C
+/// facade restores output mode only when the display actually writes. SD
+/// command packets are handled specially for `embedded-sdmmc` so CS remains
+/// asserted across command writes, R1 polling, and immediate response/data
+/// bytes used during card acquisition and capacity probing.
 pub struct CoreS3SharedSdDevice {
     bus: &'static Mutex<RefCell<CoreS3RawSpi>>,
     lcd_dc: &'static Mutex<RefCell<Flex<'static>>>,
     cs: CoreS3Output,
     delay: Delay,
+    selected_command: Option<u8>,
+    data_token_seen: bool,
+    data_payload_seen: bool,
 }
 
 impl CoreS3SharedSdDevice {
@@ -252,7 +276,45 @@ impl CoreS3SharedSdDevice {
             lcd_dc: &shared_spi.lcd_dc,
             cs,
             delay: Delay::new(),
+            selected_command: None,
+            data_token_seen: false,
+            data_payload_seen: false,
         }
+    }
+
+    /// Prepare the shared CoreS3 TF-card SPI path for card acquisition.
+    ///
+    /// This leaves TF-card CS high, releases GPIO35 as a pulled-up MISO input,
+    /// applies SPI mode 0 at 400 kHz, and sends at least 80 idle clocks with
+    /// MOSI high before `embedded-sdmmc` starts issuing commands.
+    pub fn prepare_for_card_acquire(&mut self) -> Result<(), CoreS3SharedSdSpiError> {
+        critical_section::with(|cs| {
+            release_gpio35_for_sd(self.lcd_dc, cs);
+
+            let mut bus = self.bus.borrow_ref_mut(cs);
+            bus.apply_config(&sd_spi_config())
+                .map_err(CoreS3SharedSdSpiError::Config)?;
+            OutputPin::set_high(&mut self.cs).map_err(|_| CoreS3SharedSdSpiError::ChipSelect)?;
+            self.selected_command = None;
+            self.data_token_seen = false;
+            self.data_payload_seen = false;
+            self.delay.delay_ms(10);
+            SpiBus::write(&mut *bus, &SD_INIT_CLOCKS).map_err(CoreS3SharedSdSpiError::Spi)?;
+            SpiBus::flush(&mut *bus).map_err(CoreS3SharedSdSpiError::Spi)
+        })
+    }
+
+    fn finish_selected_command(
+        &mut self,
+        bus: &mut CoreS3RawSpi,
+    ) -> Result<(), CoreS3SharedSdSpiError> {
+        OutputPin::set_high(&mut self.cs).map_err(|_| CoreS3SharedSdSpiError::ChipSelect)?;
+        SpiBus::write(bus, &[0xFF]).map_err(CoreS3SharedSdSpiError::Spi)?;
+        SpiBus::flush(bus).map_err(CoreS3SharedSdSpiError::Spi)?;
+        self.selected_command = None;
+        self.data_token_seen = false;
+        self.data_payload_seen = false;
+        Ok(())
     }
 }
 
@@ -263,14 +325,14 @@ impl embedded_hal::spi::ErrorType for CoreS3SharedSdDevice {
 impl SpiDevice for CoreS3SharedSdDevice {
     fn transaction(&mut self, operations: &mut [Operation<'_, u8>]) -> Result<(), Self::Error> {
         critical_section::with(|cs| {
-            {
-                let mut dc = self.lcd_dc.borrow_ref_mut(cs);
-                dc.set_output_enable(false);
-                dc.apply_input_config(&InputConfig::default());
-                dc.set_input_enable(true);
-            }
+            release_gpio35_for_sd(self.lcd_dc, cs);
 
             let mut bus = self.bus.borrow_ref_mut(cs);
+            bus.apply_config(&sd_spi_config())
+                .map_err(CoreS3SharedSdSpiError::Config)?;
+            if self.selected_command.is_some() {
+                self.finish_selected_command(&mut bus)?;
+            }
             OutputPin::set_low(&mut self.cs).map_err(|_| CoreS3SharedSdSpiError::ChipSelect)?;
 
             let mut result = Ok(());
@@ -298,19 +360,114 @@ impl SpiDevice for CoreS3SharedSdDevice {
                 Ok(())
             };
             let cs_result = OutputPin::set_high(&mut self.cs);
+            let trailing_clock_result =
+                if result.is_ok() && flush_result.is_ok() && cs_result.is_ok() {
+                    SpiBus::write(&mut *bus, &[0xFF]).and_then(|()| SpiBus::flush(&mut *bus))
+                } else {
+                    Ok(())
+                };
 
-            {
-                let mut dc = self.lcd_dc.borrow_ref_mut(cs);
-                dc.set_low();
-                dc.apply_output_config(&OutputConfig::default());
-                dc.set_output_enable(true);
-            }
-
+            self.selected_command = None;
+            self.data_token_seen = false;
+            self.data_payload_seen = false;
             result
                 .and(flush_result)
+                .and(trailing_clock_result)
                 .map_err(CoreS3SharedSdSpiError::Spi)?;
             cs_result.map_err(|_| CoreS3SharedSdSpiError::ChipSelect)
         })
+    }
+
+    fn write(&mut self, buf: &[u8]) -> Result<(), Self::Error> {
+        if let Some(command) = sd_command(buf) {
+            return critical_section::with(|cs| {
+                release_gpio35_for_sd(self.lcd_dc, cs);
+
+                let mut bus = self.bus.borrow_ref_mut(cs);
+                bus.apply_config(&sd_spi_config())
+                    .map_err(CoreS3SharedSdSpiError::Config)?;
+                if self.selected_command.is_some() {
+                    self.finish_selected_command(&mut bus)?;
+                }
+
+                OutputPin::set_low(&mut self.cs).map_err(|_| CoreS3SharedSdSpiError::ChipSelect)?;
+                self.selected_command = Some(command);
+                self.data_token_seen = false;
+                self.data_payload_seen = false;
+                SpiBus::write(&mut *bus, buf).map_err(CoreS3SharedSdSpiError::Spi)?;
+                SpiBus::flush(&mut *bus).map_err(CoreS3SharedSdSpiError::Spi)
+            });
+        }
+
+        if self.selected_command.is_some() {
+            return critical_section::with(|cs| {
+                release_gpio35_for_sd(self.lcd_dc, cs);
+                let mut bus = self.bus.borrow_ref_mut(cs);
+                bus.apply_config(&sd_spi_config())
+                    .map_err(CoreS3SharedSdSpiError::Config)?;
+                SpiBus::write(&mut *bus, buf).map_err(CoreS3SharedSdSpiError::Spi)?;
+                SpiBus::flush(&mut *bus).map_err(CoreS3SharedSdSpiError::Spi)
+            });
+        }
+
+        self.transaction(&mut [Operation::Write(buf)])
+    }
+
+    fn transfer(&mut self, read: &mut [u8], write: &[u8]) -> Result<(), Self::Error> {
+        if let Some(command) = self.selected_command {
+            return critical_section::with(|cs| {
+                release_gpio35_for_sd(self.lcd_dc, cs);
+
+                let mut bus = self.bus.borrow_ref_mut(cs);
+                bus.apply_config(&sd_spi_config())
+                    .map_err(CoreS3SharedSdSpiError::Config)?;
+                SpiBus::transfer(&mut *bus, read, write).map_err(CoreS3SharedSdSpiError::Spi)?;
+                SpiBus::flush(&mut *bus).map_err(CoreS3SharedSdSpiError::Spi)?;
+
+                if read.len() == 1 && write == [0xFF] {
+                    if command_has_data_block(command) && read[0] == 0xFE {
+                        self.data_token_seen = true;
+                    } else if (read[0] & 0x80) == 0
+                        && !command_has_trailing_response(command)
+                        && !command_has_data_block(command)
+                    {
+                        self.finish_selected_command(&mut bus)?;
+                    }
+                }
+
+                Ok(())
+            });
+        }
+
+        self.transaction(&mut [Operation::Transfer(read, write)])
+    }
+
+    fn transfer_in_place(&mut self, buf: &mut [u8]) -> Result<(), Self::Error> {
+        if let Some(command) = self.selected_command {
+            return critical_section::with(|cs| {
+                release_gpio35_for_sd(self.lcd_dc, cs);
+
+                let mut bus = self.bus.borrow_ref_mut(cs);
+                bus.apply_config(&sd_spi_config())
+                    .map_err(CoreS3SharedSdSpiError::Config)?;
+                SpiBus::transfer_in_place(&mut *bus, buf).map_err(CoreS3SharedSdSpiError::Spi)?;
+                SpiBus::flush(&mut *bus).map_err(CoreS3SharedSdSpiError::Spi)?;
+
+                if command_has_trailing_response(command) {
+                    self.finish_selected_command(&mut bus)?;
+                } else if command_has_data_block(command) && self.data_token_seen {
+                    if self.data_payload_seen && buf.len() == 2 {
+                        self.finish_selected_command(&mut bus)?;
+                    } else {
+                        self.data_payload_seen = true;
+                    }
+                }
+
+                Ok(())
+            });
+        }
+
+        self.transaction(&mut [Operation::TransferInPlace(buf)])
     }
 }
 
@@ -349,8 +506,8 @@ impl CoreS3 {
     /// by downstream firmware, then borrowed as `&'static CoreS3SharedSpiParts`
     /// when creating display and SD devices. The SPI peripheral is configured
     /// with GPIO35 as MISO, matching M5Stack's CoreS3 PinMap. The BSP also keeps
-    /// an internal GPIO35 D/C controller for the LCD path and switches the pad's
-    /// output driver off during SD transactions.
+    /// an internal GPIO35 D/C controller for the LCD path, but leaves GPIO35 as a
+    /// pulled-up SD MISO input until the display actually drives D/C.
     pub fn init_shared_spi(
         resources: CoreS3SharedSpiResources,
     ) -> Result<CoreS3SharedSpiParts, BoardInitError> {
@@ -366,20 +523,68 @@ impl CoreS3 {
         // is active. `configure_shared_spi` consumes the safe GPIO35 token to attach
         // it to the SPI MISO input matrix. This BSP-private alias is used only to
         // control the GPIO output-enable/level for LCD D/C. `CoreS3SharedSdDevice`
-        // disables the GPIO output driver before every SD transaction and restores
-        // it afterward, so downstream firmware never receives aliased pin tokens or
-        // has to perform unsafe mode switching.
+        // disables the GPIO output driver before every SD transaction and leaves it
+        // released afterward, so downstream firmware never receives aliased pin
+        // tokens or has to perform unsafe mode switching.
         #[allow(unsafe_code)]
         let mut lcd_dc = Flex::new(unsafe { AnyPin::steal(35) });
-        lcd_dc.set_low();
-        lcd_dc.apply_output_config(&OutputConfig::default());
-        lcd_dc.set_output_enable(true);
+        lcd_dc.apply_input_config(&InputConfig::default().with_pull(Pull::Up));
+        lcd_dc.set_input_enable(true);
+        lcd_dc.set_output_enable(false);
 
         Ok(CoreS3SharedSpiParts {
             bus: Mutex::new(RefCell::new(spi)),
             lcd_dc: Mutex::new(RefCell::new(lcd_dc)),
             sd_slot: CoreS3SdSlot::CORE_S3,
         })
+    }
+
+    /// Initializes CoreS3's internal I2C bus for PMU/AW9523B/touch/sensor use.
+    pub fn init_internal_i2c(
+        resources: CoreS3InternalI2cResources,
+    ) -> Result<CoreS3I2c, BoardInitError> {
+        configure_i2c(resources.i2c0, resources.i2c_sda, resources.i2c_scl)
+    }
+
+    /// Initializes CoreS3 board power rails and display reset/backlight defaults.
+    pub fn init_core_s3_power(i2c: &mut CoreS3I2c) -> Result<(), BoardInitError> {
+        let mut delay = Delay::new();
+        init_display_power(i2c, &mut delay).map_err(|_| BoardInitError::Power)
+    }
+
+    /// Power-cycles the AXP2101 ALDO4 rail that feeds the CoreS3 TF-card slot.
+    ///
+    /// This helper uses read-modify-write on AXP2101 register `0x90` so it does
+    /// not disturb unrelated LDO rails. The off/on delays match the timings
+    /// validated on CoreS3 hardware for cards inserted before boot/reset/flash.
+    pub fn power_cycle_tf_card_rail(i2c: &mut CoreS3I2c) -> Result<(), BoardInitError> {
+        let mut delay = Delay::new();
+        let ldo_enable = read_register(i2c, devices::i2c::AXP2101_PMU, AXP_LDOS_ON_OFF)
+            .map_err(|_| BoardInitError::Power)?;
+        write_register(
+            i2c,
+            devices::i2c::AXP2101_PMU,
+            AXP_LDOS_ON_OFF,
+            ldo_enable & !AXP_ALDO4_ENABLE_BIT,
+        )
+        .map_err(|_| BoardInitError::Power)?;
+        delay.delay_ms(500);
+        write_register(
+            i2c,
+            devices::i2c::AXP2101_PMU,
+            AXP_ALDO4_VOLTAGE,
+            AXP_LDO_3V3_CODE,
+        )
+        .map_err(|_| BoardInitError::Power)?;
+        write_register(
+            i2c,
+            devices::i2c::AXP2101_PMU,
+            AXP_LDOS_ON_OFF,
+            ldo_enable | AXP_ALDO4_ENABLE_BIT,
+        )
+        .map_err(|_| BoardInitError::Power)?;
+        delay.delay_ms(750);
+        Ok(())
     }
 
     /// Initializes only the CoreS3 display path and returns the initialized LCD
@@ -433,10 +638,24 @@ impl CoreS3 {
     pub fn init_display_on_shared_spi(
         resources: CoreS3DisplayOnSharedSpiResources,
     ) -> Result<CoreS3SharedDisplayParts, BoardInitError> {
-        let mut delay = Delay::new();
         let mut i2c = configure_i2c(resources.i2c0, resources.i2c_sda, resources.i2c_scl)?;
-        init_display_power(&mut i2c, &mut delay).map_err(|_| BoardInitError::Power)?;
+        Self::init_core_s3_power(&mut i2c)?;
+        Self::init_display_on_powered_shared_spi(CoreS3DisplayOnPoweredSharedSpiResources {
+            shared_spi: resources.shared_spi,
+            internal_i2c: i2c,
+            lcd_cs: resources.lcd_cs,
+        })
+    }
 
+    /// Initializes the CoreS3 display after the internal power rails are ready.
+    ///
+    /// Use this helper when firmware needs to initialize and probe the TF card
+    /// before any LCD SPI traffic. The caller supplies the already-initialized
+    /// internal I2C bus so it remains available after display bring-up.
+    pub fn init_display_on_powered_shared_spi(
+        resources: CoreS3DisplayOnPoweredSharedSpiResources,
+    ) -> Result<CoreS3SharedDisplayParts, BoardInitError> {
+        let mut delay = Delay::new();
         let cs = Output::new(resources.lcd_cs, Level::High, OutputConfig::default());
         let dc = CoreS3SharedDc::new(resources.shared_spi);
         let spi_device =
@@ -466,7 +685,7 @@ impl CoreS3 {
 
         Ok(CoreS3SharedDisplayParts {
             display,
-            internal_i2c: i2c,
+            internal_i2c: resources.internal_i2c,
         })
     }
 
@@ -570,6 +789,37 @@ fn configure_shared_spi(
     .map_err(|_| BoardInitError::Spi)
 }
 
+fn sd_spi_config() -> SpiConfig {
+    SpiConfig::default()
+        .with_frequency(Rate::from_hz(SD_SPI_INIT_HZ))
+        .with_mode(Mode::_0)
+}
+
+fn sd_command(buf: &[u8]) -> Option<u8> {
+    match buf {
+        [command, _, _, _, _, _] if (command & 0xC0) == 0x40 => Some(command & 0x3F),
+        _ => None,
+    }
+}
+
+fn command_has_trailing_response(command: u8) -> bool {
+    matches!(command, 8 | 58)
+}
+
+fn command_has_data_block(command: u8) -> bool {
+    matches!(command, 9 | 10 | 17 | 18)
+}
+
+fn release_gpio35_for_sd(
+    pin: &Mutex<RefCell<Flex<'static>>>,
+    cs: critical_section::CriticalSection<'_>,
+) {
+    let mut dc = pin.borrow_ref_mut(cs);
+    dc.set_output_enable(false);
+    dc.apply_input_config(&InputConfig::default().with_pull(Pull::Up));
+    dc.set_input_enable(true);
+}
+
 fn init_display_power<I2C, Error>(i2c: &mut I2C, delay: &mut impl DelayNs) -> Result<(), Error>
 where
     I2C: I2c<Error = Error>,
@@ -635,7 +885,13 @@ where
         0xFF,
     )?;
 
-    write_register(i2c, devices::i2c::AXP2101_PMU, AXP_LDOS_ON_OFF, 0xBF)?;
+    let ldo_enable = read_register(i2c, devices::i2c::AXP2101_PMU, AXP_LDOS_ON_OFF)?;
+    write_register(
+        i2c,
+        devices::i2c::AXP2101_PMU,
+        AXP_LDOS_ON_OFF,
+        ldo_enable | AXP_CORES3_LDO_ENABLE_MASK,
+    )?;
     write_register(
         i2c,
         devices::i2c::AXP2101_PMU,

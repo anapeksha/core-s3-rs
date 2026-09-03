@@ -45,6 +45,13 @@ Consumer applications own:
 - `audio`: ES7210/AW88298 configuration helpers.
 - `gateway_h2`: Gateway H2 metadata, Matter/Thread config structs, and H2 framing transport.
 
+## CoreS3 shared LCD/TF-card SPI notes
+
+- M5Stack's official CoreS3 PinMap is the source of truth: LCD uses GPIO37 MOSI, GPIO36 SCK, GPIO3 CS, GPIO35 D/C; TF-card uses GPIO35 MISO, GPIO37 MOSI, GPIO36 SCK, GPIO4 CS.
+- For reliable SD acquisition with a pre-inserted card, initialize/probe SD before LCD SPI traffic: shared SPI, SD parts, internal I2C, CoreS3 power, ALDO4 TF-card rail power-cycle, `CoreS3SharedSdDevice::prepare_for_card_acquire()`, then `embedded-sdmmc::SdCard::num_bytes()`.
+- Use `CoreS3::init_display_on_powered_shared_spi(...)` after SD probing when the internal I2C bus has already been initialized/powered.
+- Keep GPIO35 aliasing hidden inside the BSP; downstream applications must not manually steal or mode-switch GPIO35.
+
 ## Rules
 
 - Preserve `#![no_std]`.
@@ -69,4 +76,4 @@ rustup run esp cargo check --workspace --all-features --target xtensa-esp32s3-no
 rustup run esp cargo clippy --workspace --all-features --target xtensa-esp32s3-none-elf -- -D warnings
 ```
 
-Hardware examples should be flashed and visually validated on CoreS3 when changing board bring-up.
+Hardware examples should be flashed and visually validated on CoreS3 when changing board bring-up. Shared TF-card changes require `examples/sd_block_probe` validation with the card already inserted across flash, cold boot, repeated reset, remove/reinsert/reset, and LCD-after-SD display bring-up.
