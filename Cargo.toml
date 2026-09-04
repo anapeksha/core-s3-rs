@@ -34,7 +34,7 @@ keywords = ["esp32s3", "embedded", "m5stack", "cores3", "no-std"]
 categories = ["embedded", "hardware-support", "no-std"]
 
 [workspace.dependencies]
-core-s3 = { path = "crates/core-s3", version = "0.4.2" }
+core-s3 = { path = "crates/core-s3", version = "0.4.3" }
 critical-section = "1.2.0"
 defmt = "1.0.1"
 embedded-graphics = { version = "0.8.2", default-features = false }

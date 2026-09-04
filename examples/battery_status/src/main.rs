@@ -120,7 +120,12 @@ where
         .ok();
 
     let mut pct: String<48> = String::new();
-    write!(&mut pct, "Estimate: {}%", status.percentage).unwrap();
+    let source = if status.percentage_estimated {
+        "estimate"
+    } else {
+        "gauge"
+    };
+    write!(&mut pct, "Battery: {}% ({source})", status.percentage).unwrap();
     Text::new(&pct, Point::new(24, 140), accent)
         .draw(display)
         .ok();
@@ -144,6 +149,15 @@ where
         .draw(display)
         .ok();
 
+    let present = match status.battery_present {
+        Some(true) => "battery: present",
+        Some(false) => "battery: absent",
+        None => "battery: unknown",
+    };
+    Text::new(present, Point::new(24, 194), style)
+        .draw(display)
+        .ok();
+
     let low = if status.low_battery {
         "LOW BATTERY"
     } else {
@@ -151,7 +165,7 @@ where
     };
     Text::new(
         low,
-        Point::new(24, 194),
+        Point::new(24, 210),
         if status.low_battery { warning } else { accent },
     )
     .draw(display)
@@ -169,7 +183,7 @@ fn clear_status_area<T>(display: &mut T)
 where
     T: DrawTarget<Color = Rgb565>,
 {
-    Rectangle::new(Point::new(20, 110), Size::new(270, 104))
+    Rectangle::new(Point::new(20, 110), Size::new(270, 116))
         .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
         .draw(display)
         .ok();

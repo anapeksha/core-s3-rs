@@ -44,6 +44,10 @@ GPIO35 is therefore a physically shared pad: display writes drive it as LCD D/C,
 | ES7210        | Microphone ADC    | I²S + control bus |
 | AW88298       | Speaker amplifier | I²S + control bus |
 
+## AXP2101 battery status
+
+M5Unified's CoreS3 battery percentage path reads AXP2101 register `0xA4` directly. `core-s3` follows that behavior through `Axp2101::battery_level_percent()` and uses voltage-derived percentage only as a coarse fallback. AXP2101 register `0x01` bits 5:6 report charging/ discharging/standby state; register `0x00` bit `0x20` reports VBUS-good external power, and bit `0x08` reports battery presence. CoreS3 does not expose battery current through the AXP2101 path used by this BSP, so current-based coulomb counting is not available via AXP2101 alone.
+
 ## Matter over Thread
 
 The `gateway-h2` feature exposes `core_s3::gateway_h2::matter`, which combines Gateway H2 transport metadata with Matter commissioning and Thread dataset configuration. The module re-exports `rs-matter` for firmware crates that instantiate a real Matter server and bind it to the ESP32-H2/Thread transport.
