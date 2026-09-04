@@ -38,7 +38,7 @@ Consumer applications own:
 - `display`: ILI9342C-compatible panel driver and dirty-region sprite.
 - `ui`: lightweight `embedded-graphics` widgets.
 - `touch`: FT6336U touch driver and coordinate transforms.
-- `power`: AXP2101 and battery/power-state helpers.
+- `power`: AXP2101 and battery/power-state helpers. Prefer AXP2101 register `0xA4` as CoreS3 SOC source, matching M5Unified; voltage percentage is only a coarse fallback.
 - `aw9523b`: AW9523B I/O expander driver.
 - `motion`: BMI270 and BMM150 helpers.
 - `rtc`: BM8563 driver and `no_std` date/time types.

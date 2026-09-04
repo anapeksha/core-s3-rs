@@ -23,7 +23,7 @@ The crate is intentionally `#![no_std]` and keeps the reusable BSP layer modular
 | --------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | ILI9342C SPI LCD      | MOSI GPIO37, SCLK GPIO36, CS GPIO3, D/C GPIO35, TF CS GPIO4 held high | init, RGB565 drawing, clipping, rotation/MADCTL, dirty-region blits, shared-SPI initializer                              |
 | FT6336U touch         | I2C `0x38` on SDA GPIO12/SCL GPIO11                                   | touch report parsing, down/up/move, gestures, rotation mapping, hit testing                                              |
-| AXP2101 PMIC          | I2C `0x34`                                                            | CoreS3 defaults, backlight rail, battery voltage/status helpers, shutdown/sleep prep                                     |
+| AXP2101 PMIC          | I2C `0x34`                                                            | CoreS3 defaults, backlight rail, M5Unified-compatible battery SOC/status helpers, shutdown/sleep prep                    |
 | AW9523B expander      | I2C `0x58`                                                            | CoreS3 defaults and safe output helpers, LCD reset pin helper                                                            |
 | BMI270 IMU            | I2C `0x69`                                                            | init/config, accel/gyro raw reads, offsets, basic motion detection                                                       |
 | BMM150 magnetometer   | `0x10` on BMI270 auxiliary sensor-hub I2C                             | generic register helper, hard-iron offset, integer heading helper; CoreS3 access path needs BMI270 sensor-hub validation |
@@ -129,6 +129,12 @@ For robust acquisition when a card is already inserted at flash/cold-boot/reset 
 Downstream firmware can keep using `embedded_hal::spi::SpiDevice` and, with feature `sdmmc`, `CoreS3SdParts::into_sdmmc()` returns an `embedded_sdmmc::SdCard<SPI, DELAY>` suitable for a real `num_bytes()` capacity probe.
 
 The BSP intentionally does not provide credential/token/secret abstractions, fake filesystems, plaintext storage policy, or encryption; downstream firmware should encrypt sensitive bytes before writing them to SD.
+
+## Power / battery status
+
+`core_s3::power::Axp2101::battery_level_percent()` reads AXP2101 register `0xA4`, matching M5Unified's CoreS3 `getBatteryLevel()` behavior. `Axp2101::status()` prefers that gauge SOC when it returns `0..=100`; if unavailable, the existing `BatteryStatus::percentage` falls back to a coarse voltage estimate and sets `percentage_estimated = true` with `state_of_charge = None`.
+
+Charging state comes from AXP2101 register `0x01` bits 5:6. External power uses register `0x00` bit `0x20`, and battery presence uses register `0x00` bit `0x08`. CoreS3/AXP2101 does not expose battery current through this BSP path, so current-based coulomb counting is not available from AXP2101 alone.
 
 ## Matter / Gateway H2 scope
 

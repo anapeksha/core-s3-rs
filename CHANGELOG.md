@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-09-04
+
+- Added `Axp2101::battery_level_percent()` using AXP2101 register `0xA4`, matching M5Unified's CoreS3 battery-level path.
+- Updated `Axp2101::status()` to prefer the AXP2101 gauge SOC when valid and fall back to voltage-derived percentage only as an estimate.
+- Added non-breaking `BatteryStatus` fields: `percentage_estimated`, `state_of_charge`, and `battery_present`.
+- Added dedicated `Axp2101::charge_state()`, `external_power()`, and `battery_present()` helpers backed by AXP2101 status registers `0x01` and `0x00`.
+- Added pure AXP2101 decode helpers and host tests for SOC, charge state, external power, and battery presence decoding.
+
 ## [0.4.2] - 2026-09-04
 
 - Fixed CoreS3 TF-card acquisition for cards inserted before flashing, cold boot, or reset by keeping TF-card CS asserted across `embedded-sdmmc` CMD0 command writes and one-byte R1 response polls.
