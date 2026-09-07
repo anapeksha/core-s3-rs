@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-09-07
+
+- Added a CoreS3-specific shared LCD `SpiDevice` so LCD transactions force TF-card CS high, switch GPIO35 to LCD D/C output only while LCD CS is active, and restore the SD/MISO-safe idle state afterward.
+- Centralized TF-card CS ownership in `CoreS3SharedSpiParts` so LCD and SD access share one BSP-controlled SPI2/GPIO35 coordinator.
+- Restored GPIO35's ESP32-S3 GPIO matrix role between LCD D/C output and SPI2 MISO using minimal documented ROM matrix calls, matching M5GFX's CoreS3 `cs_control()` behavior.
+- Kept SD transactions SD/MISO-safe across LCD traffic while preserving the v0.4.2 SD-before-LCD acquisition sequence and CMD0 CS framing.
+- Added pure host tests for CoreS3 shared-SPI invariants and SD command-framing state.
+- Added `examples/display_sd_coexist` for real hardware validation of alternating LCD updates and raw SD read/write/readback while the LCD remains initialized.
+
 ## [0.4.3] - 2026-09-04
 
 - Added `Axp2101::battery_level_percent()` using AXP2101 register `0xA4`, matching M5Unified's CoreS3 battery-level path.
