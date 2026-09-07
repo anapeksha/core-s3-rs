@@ -130,7 +130,7 @@ dependencies = [
 
 [[package]]
 name = "core-s3"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "critical-section",
  "defmt",
@@ -290,6 +290,21 @@ dependencies = [
  "esp-hal",
  "esp-println",
  "heapless 0.9.3",
+]
+
+[[package]]
+name = "display_sd_coexist"
+version = "0.1.0"
+dependencies = [
+ "core-s3",
+ "embedded-graphics",
+ "embedded-sdmmc",
+ "esp-backtrace",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "heapless 0.9.3",
+ "static_cell",
 ]
 
 [[package]]

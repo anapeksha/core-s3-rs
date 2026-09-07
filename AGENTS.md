@@ -50,6 +50,7 @@ Consumer applications own:
 - M5Stack's official CoreS3 PinMap is the source of truth: LCD uses GPIO37 MOSI, GPIO36 SCK, GPIO3 CS, GPIO35 D/C; TF-card uses GPIO35 MISO, GPIO37 MOSI, GPIO36 SCK, GPIO4 CS.
 - For reliable SD acquisition with a pre-inserted card, initialize/probe SD before LCD SPI traffic: shared SPI, SD parts, internal I2C, CoreS3 power, ALDO4 TF-card rail power-cycle, `CoreS3SharedSdDevice::prepare_for_card_acquire()`, then `embedded-sdmmc::SdCard::num_bytes()`.
 - Use `CoreS3::init_display_on_powered_shared_spi(...)` after SD probing when the internal I2C bus has already been initialized/powered.
+- Cooperative LCD/SD sharing must keep LCD CS and TF-card CS from being active simultaneously and restore safe idle after error paths: LCD CS high, TF-card CS high, GPIO35 SD MISO/input default, SPI2 SD/full-duplex-safe mode.
 - Keep GPIO35 aliasing hidden inside the BSP; downstream applications must not manually steal or mode-switch GPIO35.
 
 ## Rules
@@ -76,4 +77,4 @@ rustup run esp cargo check --workspace --all-features --target xtensa-esp32s3-no
 rustup run esp cargo clippy --workspace --all-features --target xtensa-esp32s3-none-elf -- -D warnings
 ```
 
-Hardware examples should be flashed and visually validated on CoreS3 when changing board bring-up. Shared TF-card changes require `examples/sd_block_probe` validation with the card already inserted across flash, cold boot, repeated reset, remove/reinsert/reset, and LCD-after-SD display bring-up.
+Hardware examples should be flashed and visually validated on CoreS3 when changing board bring-up. Shared TF-card acquisition changes require `examples/sd_block_probe` validation with the card already inserted across flash, cold boot, repeated reset, remove/reinsert/reset, and LCD-after-SD display bring-up. Cooperative LCD/TF-card SPI changes also require `examples/display_sd_coexist` validation with alternating LCD updates and raw SD read/write/readback while the display remains initialized.
