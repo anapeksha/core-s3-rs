@@ -28,6 +28,16 @@ use esp_hal::{
     uart::{Config as UartConfig, Uart},
 };
 
+#[cfg(feature = "camera")]
+use esp_hal::{
+    dma::DmaRxBuf,
+    lcd_cam::{LcdCam, cam as hal_cam},
+};
+
+#[cfg(feature = "camera")]
+use crate::camera::{
+    CameraCaptureError, CameraConfig, CameraFrameInfo, CameraInitError, CameraSensor,
+};
 #[cfg(feature = "gateway-h2")]
 use crate::gateway_h2::transport::GatewayH2OpenThreadConfig;
 use crate::{
@@ -84,6 +94,9 @@ pub type CoreS3SharedDisplay = Display<CoreS3SharedLcdSpiDevice, CoreS3SharedDc,
 pub type CoreS3EspHalSdParts = CoreS3SdParts<CoreS3SharedSdSpiDevice, Delay>;
 /// Concrete blocking UART used for the Gateway H2 host link.
 pub type CoreS3GatewayH2Uart = Uart<'static, Blocking>;
+/// Concrete ESP-HAL LCD_CAM camera driver used by CoreS3 camera support.
+#[cfg(feature = "camera")]
+pub type CoreS3CameraDriver = hal_cam::Camera<'static>;
 
 /// ESP-HAL resources required to initialize the shared LCD/TF SPI bus.
 ///
@@ -167,6 +180,136 @@ pub struct CoreS3SharedDisplayParts {
 pub struct CoreS3SdOnSharedSpiResources {
     pub shared_spi: &'static CoreS3SharedSpiParts,
     pub tf_card_cs: esp_hal::peripherals::GPIO4<'static>,
+}
+
+/// ESP-HAL resources required to initialize CoreS3's GC0308 DVP camera.
+///
+/// This follows M5Stack's CoreS3 user demo camera mapping: XCLK GPIO2, SCCB on
+/// internal I²C GPIO12/GPIO11, D0..D7 on GPIO39/40/41/42/15/16/48/47, VSYNC
+/// GPIO46, HREF GPIO38, and PCLK GPIO45. GPIO2 is Grove Port A pin 2, so camera
+/// use conflicts with treating Port A as a free application GPIO/I²C pin.
+#[cfg(feature = "camera")]
+pub struct CoreS3CameraResources {
+    pub lcd_cam: esp_hal::peripherals::LCD_CAM<'static>,
+    pub dma_ch0: esp_hal::peripherals::DMA_CH0<'static>,
+    pub internal_i2c: CoreS3I2c,
+    pub xclk: esp_hal::peripherals::GPIO2<'static>,
+    pub pclk: esp_hal::peripherals::GPIO45<'static>,
+    pub vsync: esp_hal::peripherals::GPIO46<'static>,
+    pub href: esp_hal::peripherals::GPIO38<'static>,
+    pub d0: esp_hal::peripherals::GPIO39<'static>,
+    pub d1: esp_hal::peripherals::GPIO40<'static>,
+    pub d2: esp_hal::peripherals::GPIO41<'static>,
+    pub d3: esp_hal::peripherals::GPIO42<'static>,
+    pub d4: esp_hal::peripherals::GPIO15<'static>,
+    pub d5: esp_hal::peripherals::GPIO16<'static>,
+    pub d6: esp_hal::peripherals::GPIO48<'static>,
+    pub d7: esp_hal::peripherals::GPIO47<'static>,
+}
+
+/// Initialized CoreS3 GC0308 camera path.
+#[cfg(feature = "camera")]
+pub struct CoreS3Camera {
+    driver: Option<CoreS3CameraDriver>,
+    internal_i2c: CoreS3I2c,
+    config: CameraConfig,
+    sensor: CameraSensor,
+    started: bool,
+}
+
+#[cfg(feature = "camera")]
+impl CoreS3Camera {
+    /// Start the logical capture lifecycle.
+    pub fn start(&mut self) -> Result<(), CameraCaptureError> {
+        if self.driver.is_none() {
+            return Err(CameraCaptureError::InvalidState);
+        }
+        self.started = true;
+        Ok(())
+    }
+
+    /// Capture one frame into an ESP-HAL DMA receive buffer.
+    ///
+    /// ESP-HAL 1.1.x requires a descriptor-backed DMA buffer for LCD_CAM camera
+    /// capture; a plain `&mut [u8]` is not sufficient. The returned `DmaRxBuf`
+    /// owns the same caller-supplied static buffer and can be inspected with
+    /// `as_slice()`/`number_of_received_bytes()`.
+    pub fn capture_dma_frame(
+        &mut self,
+        mut buffer: DmaRxBuf,
+    ) -> Result<(CameraFrameInfo, DmaRxBuf), CameraCaptureError> {
+        if !self.started {
+            return Err(CameraCaptureError::NotStarted);
+        }
+        let info =
+            crate::camera::frame_info(self.config).ok_or(CameraCaptureError::InvalidState)?;
+        if buffer.as_slice().len() < info.len {
+            return Err(CameraCaptureError::BufferTooSmall);
+        }
+        buffer.set_length(info.len);
+        let driver = self.driver.take().ok_or(CameraCaptureError::InvalidState)?;
+        let transfer = match driver.receive(buffer) {
+            Ok(transfer) => transfer,
+            Err((_error, driver, buffer)) => {
+                self.driver = Some(driver);
+                return Err(if buffer.as_slice().len() < info.len {
+                    CameraCaptureError::BufferTooSmall
+                } else {
+                    CameraCaptureError::Dma
+                });
+            }
+        };
+        let (result, driver, buffer) = transfer.wait();
+        self.driver = Some(driver);
+        result.map_err(|_| CameraCaptureError::Dma)?;
+        Ok((info, buffer))
+    }
+
+    /// Stop the logical capture lifecycle. In-flight transfers are stopped by
+    /// `capture_dma_frame` before it returns.
+    pub fn stop(&mut self) {
+        self.started = false;
+    }
+
+    /// Reconfigure the GC0308 output/crop mode.
+    pub fn set_config(&mut self, config: CameraConfig) -> Result<(), CameraInitError> {
+        if config.xclk_hz != 20_000_000 {
+            return Err(CameraInitError::Clock);
+        }
+        let mut delay = Delay::new();
+        crate::camera::configure_gc0308(&mut self.internal_i2c, &mut delay, config)?;
+        self.config = config;
+        Ok(())
+    }
+
+    /// Reconfigure only the centered GC0308 digital crop/zoom.
+    pub fn set_zoom(&mut self, zoom: crate::camera::DigitalZoom) -> Result<(), CameraInitError> {
+        self.set_config(self.config.with_zoom(zoom))
+    }
+
+    /// Return the active camera configuration.
+    pub fn config(&self) -> CameraConfig {
+        self.config
+    }
+
+    /// Return the detected CoreS3 camera sensor.
+    pub fn sensor(&self) -> CameraSensor {
+        self.sensor
+    }
+
+    /// Borrow the internal I²C bus while the camera object owns it.
+    ///
+    /// This lets downstream firmware perform short PMIC/touch/sensor operations
+    /// with drivers that accept `&mut CoreS3I2c`, without tearing down camera
+    /// ownership. Do not call this during an in-flight camera capture.
+    pub fn internal_i2c_mut(&mut self) -> &mut CoreS3I2c {
+        &mut self.internal_i2c
+    }
+
+    /// Release the internal I²C bus for other CoreS3 internal devices.
+    pub fn release_i2c(self) -> CoreS3I2c {
+        self.internal_i2c
+    }
 }
 
 /// ESP-HAL resources required to initialize the Gateway H2 UART link.
@@ -832,6 +975,54 @@ impl CoreS3 {
             spi_device,
             delay: Delay::new(),
             slot: resources.shared_spi.sd_slot,
+        })
+    }
+
+    /// Initializes CoreS3's GC0308 camera over ESP-HAL `LCD_CAM`.
+    ///
+    /// This consumes the camera's concrete CoreS3 GPIOs, the LCD_CAM peripheral,
+    /// DMA channel 0, and the internal I²C bus used as GC0308 SCCB. M5Stack's
+    /// CoreS3 user demo uses a 20 MHz XCLK; arbitrary XCLK rates are rejected on
+    /// `esp-hal = "=1.1.2"` because the camera config fields are not publicly
+    /// adjustable beyond the HAL default.
+    #[cfg(feature = "camera")]
+    pub fn init_camera(
+        resources: CoreS3CameraResources,
+        config: CameraConfig,
+    ) -> Result<CoreS3Camera, CameraInitError> {
+        if config.xclk_hz != 20_000_000 {
+            return Err(CameraInitError::Clock);
+        }
+        crate::camera::validate_config(config)?;
+
+        let lcd_cam = LcdCam::new(resources.lcd_cam);
+        let driver =
+            hal_cam::Camera::new(lcd_cam.cam, resources.dma_ch0, hal_cam::Config::default())
+                .map_err(|_| CameraInitError::Clock)?
+                .with_master_clock(resources.xclk)
+                .with_pixel_clock(resources.pclk)
+                .with_vsync(resources.vsync)
+                .with_h_enable(resources.href)
+                .with_data0(resources.d0)
+                .with_data1(resources.d1)
+                .with_data2(resources.d2)
+                .with_data3(resources.d3)
+                .with_data4(resources.d4)
+                .with_data5(resources.d5)
+                .with_data6(resources.d6)
+                .with_data7(resources.d7);
+
+        let mut internal_i2c = resources.internal_i2c;
+        let sensor = crate::camera::probe_gc0308(&mut internal_i2c)?;
+        let mut delay = Delay::new();
+        crate::camera::configure_gc0308(&mut internal_i2c, &mut delay, config)?;
+
+        Ok(CoreS3Camera {
+            driver: Some(driver),
+            internal_i2c,
+            config,
+            sensor,
+            started: false,
         })
     }
 

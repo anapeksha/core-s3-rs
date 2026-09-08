@@ -12,6 +12,7 @@ The crate is intentionally `#![no_std]` and keeps the reusable BSP layer modular
 - BMI270/BMM150 motion/orientation helpers
 - BM8563 RTC helpers with small `no_std` date/time types
 - ES7210/AW88298 audio configuration helpers
+- feature-gated CoreS3 GC0308 camera metadata, SCCB setup, ESP-HAL LCD_CAM bring-up, and bounded DMA capture behind `camera`
 - feature-gated Gateway H2 UART/framing/OpenThread transport surfaces and Spinel HDLC-lite codec behind `gateway-h2`
 - optional TF-card SD parts compatible with `embedded-sdmmc`
 
@@ -19,19 +20,20 @@ The crate is intentionally `#![no_std]` and keeps the reusable BSP layer modular
 
 ## Peripheral support
 
-| Peripheral            | Address / pins                                                        | Support                                                                                                                  |
-| --------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| ILI9342C SPI LCD      | MOSI GPIO37, SCLK GPIO36, CS GPIO3, D/C GPIO35, TF CS GPIO4 held high | init, RGB565 drawing, clipping, rotation/MADCTL, dirty-region blits, shared-SPI initializer                              |
-| FT6336U touch         | I2C `0x38` on SDA GPIO12/SCL GPIO11                                   | touch report parsing, down/up/move, gestures, rotation mapping, hit testing                                              |
-| AXP2101 PMIC          | I2C `0x34`                                                            | CoreS3 defaults, backlight rail, M5Unified-compatible battery SOC/status helpers, shutdown/sleep prep                    |
-| AW9523B expander      | I2C `0x58`                                                            | CoreS3 defaults and safe output helpers, LCD reset pin helper                                                            |
-| BMI270 IMU            | I2C `0x69`                                                            | init/config, accel/gyro raw reads, offsets, basic motion detection                                                       |
-| BMM150 magnetometer   | `0x10` on BMI270 auxiliary sensor-hub I2C                             | generic register helper, hard-iron offset, integer heading helper; CoreS3 access path needs BMI270 sensor-hub validation |
-| BM8563 RTC            | I2C `0x51`                                                            | get/set date-time, alarms, timer metadata                                                                                |
-| ES7210 microphone ADC | I2C `0x40`, I2S GPIO0/34/33/13/14                                     | configuration helper; I2S DMA remains app/HAL-owned                                                                      |
-| AW88298 speaker amp   | I2C `0x36`, I2S GPIO0/34/33/13/14                                     | configuration helper; I2S DMA remains app/HAL-owned                                                                      |
-| Gateway H2            | UART1, TX GPIO1, RX GPIO2, 115200 baud                                | UART bring-up, small request/response/event framing, OpenThread/Spinel transport traits, and Spinel HDLC-lite codec      |
-| TF-card slot          | SCLK GPIO36, MOSI GPIO37, MISO GPIO35, CS GPIO4                       | slot metadata, card-detect helper, shared-SPI `SpiDevice` parts, optional `embedded-sdmmc::SdCard` conversion            |
+| Peripheral            | Address / pins                                                                                             | Support                                                                                                                  |
+| --------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| ILI9342C SPI LCD      | MOSI GPIO37, SCLK GPIO36, CS GPIO3, D/C GPIO35, TF CS GPIO4 held high                                      | init, RGB565 drawing, clipping, rotation/MADCTL, dirty-region blits, shared-SPI initializer                              |
+| FT6336U touch         | I2C `0x38` on SDA GPIO12/SCL GPIO11                                                                        | touch report parsing, down/up/move, gestures, rotation mapping, hit testing                                              |
+| AXP2101 PMIC          | I2C `0x34`                                                                                                 | CoreS3 defaults, backlight rail, M5Unified-compatible battery SOC/status helpers, shutdown/sleep prep                    |
+| AW9523B expander      | I2C `0x58`                                                                                                 | CoreS3 defaults and safe output helpers, LCD reset pin helper                                                            |
+| BMI270 IMU            | I2C `0x69`                                                                                                 | init/config, accel/gyro raw reads, offsets, basic motion detection                                                       |
+| BMM150 magnetometer   | `0x10` on BMI270 auxiliary sensor-hub I2C                                                                  | generic register helper, hard-iron offset, integer heading helper; CoreS3 access path needs BMI270 sensor-hub validation |
+| BM8563 RTC            | I2C `0x51`                                                                                                 | get/set date-time, alarms, timer metadata                                                                                |
+| ES7210 microphone ADC | I2C `0x40`, I2S GPIO0/34/33/13/14                                                                          | configuration helper; I2S DMA remains app/HAL-owned                                                                      |
+| AW88298 speaker amp   | I2C `0x36`, I2S GPIO0/34/33/13/14                                                                          | configuration helper; I2S DMA remains app/HAL-owned                                                                      |
+| Gateway H2            | UART1, TX GPIO1, RX GPIO2, 115200 baud                                                                     | UART bring-up, small request/response/event framing, OpenThread/Spinel transport traits, and Spinel HDLC-lite codec      |
+| TF-card slot          | SCLK GPIO36, MOSI GPIO37, MISO GPIO35, CS GPIO4                                                            | slot metadata, card-detect helper, shared-SPI `SpiDevice` parts, optional `embedded-sdmmc::SdCard` conversion            |
+| GC0308 camera         | XCLK GPIO2, PCLK GPIO45, VSYNC GPIO46, HREF GPIO38, D0..D7 GPIO39/40/41/42/15/16/48/47, SCCB GPIO12/GPIO11 | feature-gated `camera` API, sensor probe/config, QQVGA RGB565/grayscale metadata, ESP-HAL LCD_CAM DMA capture wrapper    |
 
 ## Repository layout
 
@@ -52,6 +54,7 @@ examples/audio_init/              ES7210/AW88298 smoke-test shell
 examples/sd_card/                 AW9523B TF-card detect demo
 examples/sd_block_probe/          shared-SPI embedded-sdmmc capacity probe
 examples/display_sd_coexist/      alternating LCD + raw SD read/write coexistence test
+examples/camera_capture/          GC0308 live LCD preview and bounded DMA capture demo
 examples/gateway_h2_transport/    H2 framing smoke-test shell
 examples/full_board_demo/         board overview smoke-test shell
 .github/workflows/                PR validation and firmware release automation
@@ -62,6 +65,7 @@ examples/full_board_demo/         board overview smoke-test shell
 | Feature      | Description                                                                                                                                                                                |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `defmt`      | Enables `defmt` formatting for supported dependency-free public types.                                                                                                                     |
+| `camera`     | Enables `core_s3::camera` and ESP-HAL-backed CoreS3 GC0308/LCD_CAM bring-up helpers. Implies `esp-hal`.                                                                                    |
 | `esp-hal`    | Enables ESP-HAL-backed CoreS3 bring-up helpers on Xtensa ESP32-S3 targets.                                                                                                                 |
 | `gateway-h2` | Exposes `core_s3::gateway_h2`, Gateway H2 metadata, UART bring-up, Matter/Thread config types, H2 framing, OpenThread/Spinel transport traits, and Spinel HDLC-lite encode/decode helpers. |
 | `sdmmc`      | Enables conversion from BSP SD parts into `embedded_sdmmc::SdCard<SPI, DELAY>`.                                                                                                            |
@@ -131,6 +135,20 @@ Downstream firmware can keep using `embedded_hal::spi::SpiDevice` and, with feat
 
 The BSP intentionally does not provide credential/token/secret abstractions, fake filesystems, plaintext storage policy, or encryption; downstream firmware should encrypt sensitive bytes before writing them to SD.
 
+## Camera
+
+Enable feature `camera` for the CoreS3 GC0308 camera API. The BSP owns the CoreS3 camera pin map from M5Stack's UserDemo (`XCLK GPIO2`, SCCB on internal I²C `GPIO12/GPIO11`, `PCLK GPIO45`, `VSYNC GPIO46`, `HREF GPIO38`, and `D0..D7 GPIO39/40/41/42/15/16/48/47`), probes the GC0308 product ID, applies the GC0308 default register table, and configures the advertised output mode.
+
+v0.5.0 intentionally supports only bounded low-memory raw modes until broader frame sizes are hardware-validated:
+
+- `CameraConfig::qqvga_rgb565()` — `160x120`, RGB565, `QQVGA_RGB565_FRAME_BUFFER_BYTES`
+- `CameraConfig::qr_grayscale()` — `160x120`, luminance bytes, `QR_GRAYSCALE_FRAME_BUFFER_BYTES`
+- `DigitalZoom::{X1,X2,X4}` — centered GC0308 sensor crop; preview code can scale the cropped frame on the LCD
+
+ESP-HAL 1.1.x LCD_CAM capture requires a descriptor-backed DMA buffer, so `CoreS3Camera::capture_dma_frame(...)` accepts and returns `esp_hal::dma::DmaRxBuf` rather than a plain `&mut [u8]`. Use `examples/camera_capture` as the no-std live-preview template; it starts in sensor-crop `DigitalZoom::X2`, scales the cropped frame to the left-side LCD preview area, and exposes large right-side touch buttons for interactive `1x` / `2x` / `4x` zoom changes. Camera use consumes GPIO2, which conflicts with treating Grove Port A pin 2 as an application-owned GPIO/UART/I²C pin while the camera is active.
+
+Hardware validation for the v0.5.0 camera path was run on a real CoreS3 for serial DMA capture, live LCD preview, and interactive touch-controlled sensor-crop zoom.
+
 ## Power / battery status
 
 `core_s3::power::Axp2101::battery_level_percent()` reads AXP2101 register `0xA4`, matching M5Unified's CoreS3 `getBatteryLevel()` behavior. `Axp2101::status()` prefers that gauge SOC when it returns `0..=100`; if unavailable, the existing `BatteryStatus::percentage` falls back to a coarse voltage estimate and sets `percentage_estimated = true` with `state_of_charge = None`.
@@ -180,7 +198,14 @@ Flash an example with `cargo-embed` through the workspace runner:
 cargo +esp run -p display_widgets --release --target xtensa-esp32s3-none-elf
 ```
 
-`Embed.toml` is configured for ESP32-S3 JTAG. GDB is enabled so dynamic examples continue running while the probe session remains attached.
+`Embed.toml` is configured for ESP32-S3 JTAG with GDB disabled so `cargo +esp run ...` flashes and starts examples directly.
+
+## v0.5 migration notes
+
+- Update dependencies from `core-s3 = "0.4"` to `core-s3 = "0.5"`.
+- Enable feature `camera` to use the CoreS3 GC0308 camera module and `CoreS3::init_camera(...)`.
+- Camera v0.5.0 consumes the internal I²C bus for GC0308 SCCB during initialization/configuration and returns it through `CoreS3Camera::release_i2c()` when the application is done with camera ownership.
+- `CameraConfig::qqvga_rgb565()` and `CameraConfig::qr_grayscale()` are the supported bounded capture modes in v0.5.0; `DigitalZoom::{X1,X2,X4}` provides centered sensor-crop zoom. Larger base sizes/JPEG/custom windows are rejected until hardware-validated.
 
 ## v0.4 migration notes
 
@@ -200,7 +225,7 @@ cargo +esp run -p display_widgets --release --target xtensa-esp32s3-none-elf
 
 ## Unsupported / application-owned functionality
 
-- Camera driver support is metadata-only.
+- Camera support is feature-gated and currently limited to the CoreS3 GC0308 QQVGA raw modes documented above.
 - High-throughput I2S DMA capture/playback is application/HAL-owned.
 - Matter, Thread, Zigbee, OpenThread, and Spinel protocol stacks are application-owned.
 - Voltage-based battery percentage is approximate and should not be used as a precise fuel gauge.
