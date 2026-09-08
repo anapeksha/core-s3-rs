@@ -11,6 +11,8 @@ pub mod aw9523b;
 pub mod board;
 #[cfg(all(feature = "esp-hal", target_arch = "xtensa"))]
 pub mod bsp;
+#[cfg(feature = "camera")]
+pub mod camera;
 pub mod devices;
 pub mod display;
 pub mod motion;

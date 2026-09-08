@@ -26,6 +26,7 @@ Consumer applications own:
 - Matter, Thread, Zigbee, OpenThread, Spinel protocol runtimes
 - Matter endpoints/clusters/commissioning/persistence
 - Home Assistant behavior
+- camera image-processing/QR-decoding policy and frame persistence
 - high-throughput I2S DMA capture/playback
 - product secrets, credentials, identities, and provisioning
 
@@ -43,6 +44,7 @@ Consumer applications own:
 - `motion`: BMI270 and BMM150 helpers.
 - `rtc`: BM8563 driver and `no_std` date/time types.
 - `audio`: ES7210/AW88298 configuration helpers.
+- `camera`: feature-gated CoreS3 GC0308 metadata, SCCB helpers, and ESP-HAL LCD_CAM camera bring-up/capture wrappers.
 - `gateway_h2`: Gateway H2 metadata, Matter/Thread config structs, and H2 framing transport.
 
 ## CoreS3 shared LCD/TF-card SPI notes
@@ -52,6 +54,14 @@ Consumer applications own:
 - Use `CoreS3::init_display_on_powered_shared_spi(...)` after SD probing when the internal I2C bus has already been initialized/powered.
 - Cooperative LCD/SD sharing must keep LCD CS and TF-card CS from being active simultaneously and restore safe idle after error paths: LCD CS high, TF-card CS high, GPIO35 SD MISO/input default, SPI2 SD/full-duplex-safe mode.
 - Keep GPIO35 aliasing hidden inside the BSP; downstream applications must not manually steal or mode-switch GPIO35.
+
+## CoreS3 camera notes
+
+- M5Stack's CoreS3 UserDemo is the source for the camera pin map: XCLK GPIO2, SCCB SDA/SCL GPIO12/GPIO11, PCLK GPIO45, VSYNC GPIO46, HREF GPIO38, D0..D7 GPIO39/40/41/42/15/16/48/47, no PWDN/reset GPIO.
+- Keep camera support behind feature `camera`; do not force LCD_CAM/DMA camera dependencies into default users.
+- Preserve bounded caller-owned/DMA-backed frame buffers. Do not add QR decoders, image persistence, networking, or application policy to the BSP.
+- GPIO2 is also Grove Port A pin 2; document/report that conflict instead of stealing it implicitly.
+- Do not claim camera hardware validation unless `examples/camera_capture` has been flashed and repeated frames were observed on real CoreS3 hardware.
 
 ## Rules
 

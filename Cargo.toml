@@ -18,6 +18,7 @@ members = [
     "examples/sd_card",
     "examples/sd_block_probe",
     "examples/display_sd_coexist",
+    "examples/camera_capture",
     "examples/gateway_h2_transport",
     "examples/full_board_demo",
 ]
@@ -35,7 +36,7 @@ keywords = ["esp32s3", "embedded", "m5stack", "cores3", "no-std"]
 categories = ["embedded", "hardware-support", "no-std"]
 
 [workspace.dependencies]
-core-s3 = { path = "crates/core-s3", version = "0.4.4" }
+core-s3 = { path = "crates/core-s3", version = "0.5.0" }
 critical-section = "1.2.0"
 defmt = "1.0.1"
 embedded-graphics = { version = "0.8.2", default-features = false }

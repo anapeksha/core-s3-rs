@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-08
+
+- Added opt-in `camera` feature for CoreS3 GC0308 camera support on ESP-HAL.
+- Added `core_s3::camera` with typed frame-size/pixel-format/config/error metadata, buffer-size helpers, QR-friendly QQVGA grayscale config, and GC0308 SCCB probe/configuration helpers.
+- Added `CoreS3CameraResources`, `CoreS3Camera`, and `CoreS3::init_camera(...)` for the M5Stack CoreS3 camera pin map, internal-I2C SCCB ownership, ESP-HAL `LCD_CAM`, DMA channel 0, and bounded DMA capture lifecycle.
+- Corrected `pins::CameraPins::GC0308` to match M5Stack's CoreS3 UserDemo mapping.
+- Added Espressif GC0308 default register initialization plus QQVGA RGB565/grayscale configuration support; larger base sizes and JPEG remain rejected until hardware-validated.
+- Added `DigitalZoom::{X1,X2,X4}` for centered GC0308 sensor-crop digital zoom plus `CoreS3Camera::set_zoom(...)`.
+- Added `examples/camera_capture` as a live LCD preview demo with left-side preview, right-side touch zoom controls, sensor-crop zoom, and repeated DMA frame capture.
+
 ## [0.4.4] - 2026-09-07
 
 - Added a CoreS3-specific shared LCD `SpiDevice` so LCD transactions force TF-card CS high, switch GPIO35 to LCD D/C output only while LCD CS is active, and restore the SD/MISO-safe idle state afterward.

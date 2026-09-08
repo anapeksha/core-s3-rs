@@ -91,22 +91,22 @@ pub struct CameraPins {
 }
 
 impl CameraPins {
-    /// GC0308 DVP camera signal pins.
+    /// GC0308 DVP camera signal pins from M5Stack's CoreS3 user demo.
     pub const GC0308: Self = Self {
-        xclk: Gpio(15),
-        pclk: Gpio(39),
-        vsync: Gpio(38),
-        href: Gpio(47),
+        xclk: Gpio(2),
+        pclk: Gpio(45),
+        vsync: Gpio(46),
+        href: Gpio(38),
         reset: None,
         data: [
-            Gpio(48),
-            Gpio(17),
-            Gpio(18),
+            Gpio(39),
+            Gpio(40),
+            Gpio(41),
+            Gpio(42),
+            Gpio(15),
             Gpio(16),
-            Gpio(8),
-            Gpio(9),
-            Gpio(10),
-            Gpio(46),
+            Gpio(48),
+            Gpio(47),
         ],
     };
 }

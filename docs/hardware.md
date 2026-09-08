@@ -44,6 +44,33 @@ GPIO35 is therefore a physically shared pad: display writes drive it as LCD D/C,
 | ES7210        | Microphone ADC    | I²S + control bus |
 | AW88298       | Speaker amplifier | I²S + control bus |
 
+## Camera wiring
+
+M5Stack's CoreS3 UserDemo configures the built-in GC0308 DVP camera with this mapping:
+
+| Function | ESP32-S3 pin  |
+| -------- | ------------- |
+| XCLK     | GPIO2         |
+| SCCB SDA | GPIO12        |
+| SCCB SCL | GPIO11        |
+| PCLK     | GPIO45        |
+| VSYNC    | GPIO46        |
+| HREF     | GPIO38        |
+| D0       | GPIO39        |
+| D1       | GPIO40        |
+| D2       | GPIO41        |
+| D3       | GPIO42        |
+| D4       | GPIO15        |
+| D5       | GPIO16        |
+| D6       | GPIO48        |
+| D7       | GPIO47        |
+| PWDN     | absent / `-1` |
+| RESET    | absent / `-1` |
+
+`core-s3` feature `camera` exposes `CoreS3::init_camera(...)` for this mapping and uses ESP-HAL `LCD_CAM` plus DMA channel 0. The SCCB control path is the same internal I²C pins used for PMIC/AW9523B/touch/sensors, so camera ownership consumes a configured `CoreS3I2c` while the camera is active. GPIO2 is also Grove Port A pin 2, so camera use conflicts with treating that pin as application-owned Grove GPIO/UART/I²C.
+
+v0.5.0 supports QQVGA RGB565 and QQVGA grayscale/luminance configuration only. `DigitalZoom::{X1,X2,X4}` programs a centered GC0308 crop window; live previews can scale the cropped frame on the LCD. Broader base sizes and JPEG are intentionally rejected until validated on real CoreS3 hardware.
+
 ## AXP2101 battery status
 
 M5Unified's CoreS3 battery percentage path reads AXP2101 register `0xA4` directly. `core-s3` follows that behavior through `Axp2101::battery_level_percent()` and uses voltage-derived percentage only as a coarse fallback. AXP2101 register `0x01` bits 5:6 report charging/ discharging/standby state; register `0x00` bit `0x20` reports VBUS-good external power, and bit `0x08` reports battery presence. CoreS3 does not expose battery current through the AXP2101 path used by this BSP, so current-based coulomb counting is not available via AXP2101 alone.
@@ -60,3 +87,4 @@ The `gateway-h2` feature exposes `core_s3::gateway_h2::matter`, which combines G
 - Confirm Gateway H2 Grove UART wiring and optional reset/boot pins for the exact stack/base revision.
 - Validate `examples/sd_block_probe` on real CoreS3 hardware with an inserted valid TF card when changing SD acquisition behavior, including flash/cold-boot/reset with the card already inserted.
 - Validate `examples/display_sd_coexist` when changing shared SPI/GPIO35 behavior after LCD init; it should complete alternating LCD updates and raw SD read/write/readback while the display remains powered and initialized.
+- Validate `examples/camera_capture` on real CoreS3 hardware when changing camera support: boot with `camera`, probe GC0308 product ID, capture repeated QQVGA RGB565 and grayscale frames, stop/restart capture, verify errors return instead of panicking, and confirm display/touch/PMIC/TF-card/Gateway-H2 APIs still compile with camera support enabled.
