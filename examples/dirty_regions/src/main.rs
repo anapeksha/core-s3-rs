@@ -200,12 +200,14 @@ where
         .draw(sprite)
         .ok();
 
-    let grid_y = top_left.y + 8 - top_left.y.rem_euclid(8);
-    if grid_y < top_left.y + BLOCK_SIZE as i32 {
+    let end_y = top_left.y + BLOCK_SIZE as i32;
+    let mut grid_y = top_left.y + (-top_left.y).rem_euclid(8);
+    while grid_y < end_y {
         Rectangle::new(Point::new(top_left.x, grid_y), Size::new(BLOCK_SIZE, 1))
             .into_styled(PrimitiveStyle::with_fill(Rgb565::new(2, 4, 8)))
             .draw(sprite)
             .ok();
+        grid_y += 8;
     }
 }
 
