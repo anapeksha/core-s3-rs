@@ -36,6 +36,7 @@ const TEST_BLOCK: BlockIdx = BlockIdx(4096);
 const SPRITE_W: u16 = 176;
 const SPRITE_H: u16 = 72;
 const SPRITE_ORIGIN: Point = Point::new(72, 92);
+const INDICATOR_AREA: Rectangle = Rectangle::new(Point::new(252, 156), Size::new(16, 16));
 
 type StatusSprite = DirtySprite<Rgb565, SPRITE_W, SPRITE_H, { 176 * 72 }, 8>;
 
@@ -104,6 +105,8 @@ fn main() -> ! {
     let mut errors = 0_u32;
 
     for iteration in 1..=ITERATIONS {
+        draw_batched_indicator(display, iteration, false).expect("pre-SD LCD update");
+
         if let Err(err) = sd.read(core::slice::from_mut(&mut original), TEST_BLOCK, "preserve") {
             errors += 1;
             esp_println::println!(
@@ -155,6 +158,7 @@ fn main() -> ! {
             break;
         }
 
+        draw_batched_indicator(display, iteration, true).expect("post-SD LCD update");
         draw_status(sprite, display, writes, reads, errors).expect("status update");
         esp_println::println!("CoreS3 SD/LCD cooperative PASS: iter={}", iteration);
     }
@@ -217,6 +221,38 @@ where
         .ok();
 
     sprite.flush_dirty_at(display, SPRITE_ORIGIN)
+}
+
+fn draw_batched_indicator(
+    display: &mut core_s3::bsp::CoreS3SharedDisplay,
+    iteration: u32,
+    verified: bool,
+) -> Result<
+    (),
+    core_s3::display::DisplayError<core_s3::bsp::CoreS3SharedSdSpiError, core::convert::Infallible>,
+> {
+    let mut bytes = [0u8; 16 * 16 * 2];
+    let primary = if verified {
+        Rgb565::GREEN.into_storage()
+    } else {
+        Rgb565::YELLOW.into_storage()
+    };
+    let accent = if iteration & 1 == 0 {
+        Rgb565::CYAN.into_storage()
+    } else {
+        Rgb565::WHITE.into_storage()
+    };
+    for (index, pixel) in bytes.chunks_exact_mut(2).enumerate() {
+        let x = index % 16;
+        let y = index / 16;
+        let raw = if x == y || x + y == 15 {
+            accent
+        } else {
+            primary
+        };
+        pixel.copy_from_slice(&raw.to_be_bytes());
+    }
+    display.blit_rgb565_be(&INDICATOR_AREA, &bytes)
 }
 
 fn fill_pattern(block: &mut Block, iteration: u32) {

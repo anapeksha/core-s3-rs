@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-07
+
+- Added scoped batched LCD transactions for the CoreS3 shared SPI bus, preserving LCD/TF-card CS and GPIO35 handoff invariants with one acquisition/restoration cycle per logical update.
+- Added validated zero-copy big-endian RGB565 blits for fully in-bounds landscape regions, with bounded SPI writes and reusable transfer statistics.
+- Fixed dirty-region overflow so pending updates collapse to a conservative bounding rectangle instead of losing changed pixels; added clipped invalidation helpers and retry-safe flush semantics.
+- Expanded host tests for merge determinism, overflow coverage, clipping, failed-flush retry, byte-length validation, byte order, chunking, and logical-session counts.
+- Updated `dirty_regions` and `display_sd_coexist` to exercise overflow-safe dirty tracking and batched zero-copy LCD updates; validated both on real CoreS3 hardware, including 250 LCD/SD cycles, repeated reset, cold boot, and card remove/reinsert/reset.
+
 ## [0.5.0] - 2026-09-08
 
 - Added opt-in `camera` feature for CoreS3 GC0308 camera support on ESP-HAL.

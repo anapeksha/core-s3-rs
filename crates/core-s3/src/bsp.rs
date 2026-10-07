@@ -5,7 +5,10 @@
 //! bus used to configure AXP2101/AW9523B display power, reset, and backlight;
 //! all other ESP peripherals remain with the application.
 
-use core::{cell::RefCell, convert::Infallible};
+use core::{
+    cell::{RefCell, RefMut},
+    convert::Infallible,
+};
 
 use critical_section::Mutex;
 use embedded_hal::{
@@ -42,7 +45,10 @@ use crate::camera::{
 use crate::gateway_h2::transport::GatewayH2OpenThreadConfig;
 use crate::{
     CoreS3, devices,
-    display::{BusConfig, Display, DisplayError, DisplayGeometry, PanelConfig},
+    display::{
+        BusConfig, Display, DisplayError, DisplayGeometry, LcdTransactionDevice,
+        LcdTransactionError, LcdTransactionWriter, PanelConfig,
+    },
     sd::{CoreS3SdParts, CoreS3SdSlot},
 };
 
@@ -402,8 +408,89 @@ impl CoreS3SharedLcdDevice {
     }
 }
 
+struct CoreS3SharedLcdTransaction<'a> {
+    bus: RefMut<'a, CoreS3RawSpi>,
+    lcd_dc: RefMut<'a, Flex<'static>>,
+}
+
+impl LcdTransactionWriter for CoreS3SharedLcdTransaction<'_> {
+    type Error = CoreS3SharedSdSpiError;
+
+    fn set_command_mode(&mut self) -> Result<(), Self::Error> {
+        configure_gpio35_pin_for_lcd_dc(&mut self.lcd_dc);
+        self.lcd_dc.set_low();
+        Ok(())
+    }
+
+    fn set_data_mode(&mut self) -> Result<(), Self::Error> {
+        configure_gpio35_pin_for_lcd_dc(&mut self.lcd_dc);
+        self.lcd_dc.set_high();
+        Ok(())
+    }
+
+    fn write(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
+        SpiBus::write(&mut *self.bus, bytes).map_err(CoreS3SharedSdSpiError::Spi)
+    }
+}
+
 impl embedded_hal::spi::ErrorType for CoreS3SharedLcdDevice {
     type Error = CoreS3SharedSdSpiError;
+}
+
+impl LcdTransactionDevice for CoreS3SharedLcdDevice {
+    fn with_lcd_transaction<R, E>(
+        &mut self,
+        operation: impl FnOnce(&mut dyn LcdTransactionWriter<Error = Self::Error>) -> Result<R, E>,
+    ) -> Result<R, LcdTransactionError<E, Self::Error>> {
+        critical_section::with(|cs| {
+            if let Some(sd_cs) = self.sd_cs.borrow_ref_mut(cs).as_mut() {
+                OutputPin::set_high(sd_cs)
+                    .map_err(|_| LcdTransactionError::Device(CoreS3SharedSdSpiError::ChipSelect))?;
+            }
+
+            let mut bus = self.bus.borrow_ref_mut(cs);
+            bus.apply_config(&lcd_spi_config()).map_err(|error| {
+                LcdTransactionError::Device(CoreS3SharedSdSpiError::Config(error))
+            })?;
+            let mut lcd_dc = self.lcd_dc.borrow_ref_mut(cs);
+            configure_gpio35_pin_for_lcd_dc(&mut lcd_dc);
+            OutputPin::set_low(&mut self.lcd_cs)
+                .map_err(|_| LcdTransactionError::Device(CoreS3SharedSdSpiError::ChipSelect))?;
+
+            let operation_result = {
+                let mut transaction = CoreS3SharedLcdTransaction { bus, lcd_dc };
+                let result = operation(&mut transaction);
+                bus = transaction.bus;
+                lcd_dc = transaction.lcd_dc;
+                result
+            };
+
+            let flush_result = if operation_result.is_ok() {
+                SpiBus::flush(&mut *bus).map_err(CoreS3SharedSdSpiError::Spi)
+            } else {
+                Ok(())
+            };
+            drop(lcd_dc);
+            let cleanup_result = restore_shared_spi_safe_idle(
+                &mut bus,
+                self.lcd_dc,
+                self.sd_cs,
+                &mut self.lcd_cs,
+                cs,
+            );
+
+            if let Err(error) = cleanup_result {
+                return Err(LcdTransactionError::Device(error));
+            }
+            match operation_result {
+                Err(error) => Err(LcdTransactionError::Operation(error)),
+                Ok(value) => {
+                    flush_result.map_err(LcdTransactionError::Device)?;
+                    Ok(value)
+                }
+            }
+        })
+    }
 }
 
 impl SpiDevice for CoreS3SharedLcdDevice {
