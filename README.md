@@ -99,7 +99,7 @@ Label {
 
 ## Widgets and dirty-region sprite
 
-`core_s3::display::DirtySprite` stores an off-screen framebuffer and tracks only changed rectangles. Drawing through `embedded-graphics` marks dirty regions automatically; `flush_dirty` / `flush_dirty_at` then blit only final pixels for changed regions into the real display target.
+`core_s3::display::DirtySprite` stores an off-screen framebuffer and tracks only changed rectangles. Drawing through `embedded-graphics` marks dirty regions automatically; `flush_dirty` / `flush_dirty_at` then blit only final pixels for changed regions into the real display target. Dirty rectangles are clipped, touching/intersecting rectangles merge deterministically, and capacity overflow collapses pending regions into one conservative bounding rectangle so a changed pixel can never lose its dirty marker. `invalidate(area)` and `invalidate_all()` support explicit repaint requests. Dirty state clears only after every target write succeeds, so failed flushes remain retryable.
 
 `core_s3::ui` provides small reusable widgets without a GUI framework dependency:
 
@@ -128,6 +128,8 @@ TF CS GPIO4
 For firmware that needs both devices, use `CoreS3::init_shared_spi`, store the returned `CoreS3SharedSpiParts` in a `static_cell::StaticCell`, then create the LCD and SD chip-select devices independently with `CoreS3::init_display_on_shared_spi` and `CoreS3::init_sd_on_shared_spi`.
 
 M5Stack's official CoreS3 PinMap lists LCD D/C on GPIO35 and TF-card MISO on the same GPIO35 pad. M5GFX's CoreS3 panel switches GPIO35 on LCD CS boundaries: LCD CS active routes GPIO35 as D/C output, while LCD CS inactive releases GPIO35 back to SPI MISO. The BSP follows that model with CoreS3-specific LCD and SD `SpiDevice` wrappers: LCD transactions force TF-card CS high, route GPIO35 as D/C output only while LCD CS is active, then restore LCD CS high, TF-card CS high, GPIO35 SD MISO/input, and SD-safe SPI settings before returning. SD transactions release GPIO35 as a pulled-up MISO input before TF-card CS is active.
+
+For bounded high-throughput updates on the shared bus, `CoreS3SharedDisplay::with_lcd_transaction(...)` keeps one logical update inside one safe LCD/SD handoff. Its scoped transaction exposes validated `blit_rgb565_be(area, bytes)` writes and transfer statistics. The convenience `CoreS3SharedDisplay::blit_rgb565_be(...)` performs one address window and one logical session. Input must be exactly two bytes per pixel in row-major, big-endian RGB565 order, the area must be fully in bounds, and v0.5.1 requires landscape orientation. Validation occurs before LCD CS is asserted. Existing iterator and `embedded-graphics` APIs remain available.
 
 For robust acquisition when a card is already inserted at flash/cold-boot/reset time, initialize and probe SD before LCD SPI traffic: create shared SPI and SD parts, initialize internal I2C, call `CoreS3::init_core_s3_power(...)`, `CoreS3::power_cycle_tf_card_rail(...)`, `sd_parts.spi_device.prepare_for_card_acquire()`, then call `CoreS3SdParts::into_sdmmc()` and `SdCard::num_bytes()`. After the SD probe, initialize the LCD with `CoreS3::init_display_on_powered_shared_spi(...)`. Use `examples/display_sd_coexist` to validate alternating LCD updates and raw SD read/write/readback on hardware.
 
