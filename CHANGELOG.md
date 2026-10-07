@@ -10,7 +10,7 @@ All notable changes to this project will be documented in this file.
 - Added validated zero-copy big-endian RGB565 blits for fully in-bounds landscape regions, with bounded SPI writes and reusable transfer statistics.
 - Fixed dirty-region overflow so pending updates collapse to a conservative bounding rectangle instead of losing changed pixels; added clipped invalidation helpers and retry-safe flush semantics.
 - Expanded host tests for merge determinism, overflow coverage, clipping, failed-flush retry, byte-length validation, byte order, chunking, and logical-session counts.
-- Updated `dirty_regions` and `display_sd_coexist` to exercise overflow-safe dirty tracking and batched zero-copy LCD updates. Hardware acceptance is pending the required v0.5.1 runs and user confirmation.
+- Updated `dirty_regions` and `display_sd_coexist` to exercise overflow-safe dirty tracking and batched zero-copy LCD updates; validated both on real CoreS3 hardware, including 250 LCD/SD cycles, repeated reset, cold boot, and card remove/reinsert/reset.
 
 ## [0.5.0] - 2026-09-08
 
