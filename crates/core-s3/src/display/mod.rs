@@ -2,7 +2,9 @@ mod panel;
 mod sprite;
 
 pub use panel::{
-    BusConfig, Display, DisplayError, DisplayGeometry, DisplayOrientation, PanelConfig,
+    BusConfig, Display, DisplayError, DisplayGeometry, DisplayOrientation, DisplayTransaction,
+    DisplayTransactionError, DisplayTransferStats, LcdTransactionDevice, LcdTransactionError,
+    LcdTransactionWriter, PanelConfig, PixelDataError,
 };
 pub use sprite::{DirtySprite, DirtySpriteError, RegionSet};
 

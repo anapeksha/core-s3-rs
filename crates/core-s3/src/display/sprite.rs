@@ -12,7 +12,7 @@ use heapless::Vec;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DirtySpriteError {
     BufferTooSmall,
-    TooManyRegions,
+    InvalidRegionCapacity,
 }
 
 /// Small fixed-capacity dirty rectangle set.
@@ -43,37 +43,40 @@ impl<const MAX_REGIONS: usize> RegionSet<MAX_REGIONS> {
         if rect.is_zero_sized() {
             return Ok(());
         }
-
-        if let Some(existing) = self
-            .regions
-            .iter_mut()
-            .find(|existing| intersects_or_touches(**existing, rect))
-        {
-            *existing = bounding_rect(*existing, rect);
-            self.compact();
-            return Ok(());
+        if MAX_REGIONS == 0 {
+            return Err(DirtySpriteError::InvalidRegionCapacity);
         }
 
-        self.regions
-            .push(rect)
-            .map_err(|_| DirtySpriteError::TooManyRegions)
-    }
-
-    fn compact(&mut self) {
-        let mut i = 0;
-        while i < self.regions.len() {
-            let mut j = i + 1;
-            while j < self.regions.len() {
-                if intersects_or_touches(self.regions[i], self.regions[j]) {
-                    let merged = bounding_rect(self.regions[i], self.regions[j]);
-                    self.regions[i] = merged;
-                    self.regions.swap_remove(j);
-                } else {
-                    j += 1;
-                }
+        let mut merged = rect;
+        let mut index = 0;
+        while index < self.regions.len() {
+            if intersects_or_touches(self.regions[index], merged) {
+                merged = bounding_rect(self.regions.remove(index), merged);
+                // The enlarged rectangle can now touch an earlier region.
+                index = 0;
+            } else {
+                index += 1;
             }
-            i += 1;
         }
+
+        if self.regions.push(merged).is_err() {
+            let mut all = merged;
+            for region in self.regions.iter().copied() {
+                all = bounding_rect(all, region);
+            }
+            self.regions.clear();
+            // MAX_REGIONS was checked above, so this cannot fail.
+            let _ = self.regions.push(all);
+        }
+        self.regions.as_mut_slice().sort_unstable_by_key(|region| {
+            (
+                region.top_left.y,
+                region.top_left.x,
+                region.size.height,
+                region.size.width,
+            )
+        });
+        Ok(())
     }
 }
 
@@ -105,6 +108,9 @@ where
         if N < usize::from(W) * usize::from(H) {
             return Err(DirtySpriteError::BufferTooSmall);
         }
+        if MAX_REGIONS == 0 {
+            return Err(DirtySpriteError::InvalidRegionCapacity);
+        }
 
         Ok(Self {
             pixels: [clear; N],
@@ -118,6 +124,16 @@ where
 
     pub fn clear_dirty(&mut self) {
         self.dirty.clear();
+    }
+
+    /// Marks the portion of `area` inside the sprite as dirty.
+    pub fn invalidate(&mut self, area: Rectangle) -> Result<(), DirtySpriteError> {
+        self.dirty.add(clip_to_bounds(area, W, H))
+    }
+
+    /// Marks the entire sprite as dirty.
+    pub fn invalidate_all(&mut self) -> Result<(), DirtySpriteError> {
+        self.invalidate(Rectangle::new(Point::zero(), self.size()))
     }
 
     pub fn pixel(&self, point: Point) -> Option<C> {
@@ -163,8 +179,8 @@ where
         if let Some(idx) = self.index(point)
             && self.pixels[idx] != color
         {
-            self.pixels[idx] = color;
             self.dirty.add(Rectangle::new(point, Size::new(1, 1)))?;
+            self.pixels[idx] = color;
         }
         Ok(())
     }
@@ -232,8 +248,9 @@ where
     }
 
     fn clear(&mut self, color: Self::Color) -> Result<(), Self::Error> {
+        // Construction guarantees a nonzero region capacity, so invalidation is infallible.
+        let _ = self.invalidate_all();
         self.pixels[..usize::from(W) * usize::from(H)].fill(color);
-        let _ = self.dirty.add(Rectangle::new(Point::zero(), self.size()));
         Ok(())
     }
 }
@@ -312,6 +329,99 @@ mod tests {
     use super::*;
     use embedded_graphics::{pixelcolor::Rgb565, prelude::*, primitives::PrimitiveStyle};
 
+    fn rect(x: i32, y: i32, width: u32, height: u32) -> Rectangle {
+        Rectangle::new(Point::new(x, y), Size::new(width, height))
+    }
+
+    fn regions<const N: usize>(set: &RegionSet<N>) -> std::vec::Vec<Rectangle> {
+        set.iter().collect()
+    }
+
+    #[test]
+    fn keeps_non_overlapping_regions_separate() {
+        let mut set = RegionSet::<4>::new();
+        set.add(rect(0, 0, 1, 1)).unwrap();
+        set.add(rect(3, 3, 1, 1)).unwrap();
+        assert_eq!(regions(&set), std::vec![rect(0, 0, 1, 1), rect(3, 3, 1, 1)]);
+    }
+
+    #[test]
+    fn merges_touching_intersecting_and_transitively_connected_regions() {
+        let mut set = RegionSet::<5>::new();
+        set.add(rect(0, 0, 2, 2)).unwrap();
+        set.add(rect(5, 0, 2, 2)).unwrap();
+        set.add(rect(1, 1, 2, 2)).unwrap();
+        assert_eq!(regions(&set), std::vec![rect(0, 0, 3, 3), rect(5, 0, 2, 2)]);
+
+        set.add(rect(3, 1, 2, 1)).unwrap();
+        assert_eq!(regions(&set), std::vec![rect(0, 0, 7, 3)]);
+    }
+
+    #[test]
+    fn overflow_collapses_every_region_and_new_rectangle_to_a_bounding_box() {
+        let mut set = RegionSet::<2>::new();
+        set.add(rect(0, 1, 1, 1)).unwrap();
+        set.add(rect(4, 4, 1, 1)).unwrap();
+        set.add(rect(8, 0, 2, 1)).unwrap();
+        assert_eq!(regions(&set), std::vec![rect(0, 0, 10, 5)]);
+    }
+
+    #[test]
+    fn rejects_zero_region_capacity() {
+        let err = match DirtySprite::<Rgb565, 2, 2, 4, 0>::new(Rgb565::BLACK) {
+            Ok(_) => panic!("expected region capacity validation to fail"),
+            Err(err) => err,
+        };
+        assert_eq!(err, DirtySpriteError::InvalidRegionCapacity);
+        assert_eq!(
+            RegionSet::<0>::new().add(rect(0, 0, 1, 1)),
+            Err(DirtySpriteError::InvalidRegionCapacity)
+        );
+    }
+
+    #[test]
+    fn invalidate_clips_every_edge_and_ignores_outside_and_empty_areas() {
+        let cases = [
+            (rect(-2, 1, 4, 2), Some(rect(0, 1, 2, 2))),
+            (rect(3, 1, 4, 2), Some(rect(3, 1, 1, 2))),
+            (rect(1, -2, 2, 4), Some(rect(1, 0, 2, 2))),
+            (rect(1, 3, 2, 4), Some(rect(1, 3, 2, 1))),
+            (rect(-5, -5, 2, 2), None),
+            (rect(1, 1, 0, 3), None),
+        ];
+
+        for (area, expected) in cases {
+            let mut sprite = DirtySprite::<Rgb565, 4, 4, 16, 4>::new(Rgb565::BLACK).unwrap();
+            sprite.invalidate(area).unwrap();
+            assert_eq!(
+                sprite.dirty_regions().collect::<std::vec::Vec<_>>(),
+                expected.into_iter().collect::<std::vec::Vec<_>>()
+            );
+        }
+
+        let mut sprite = DirtySprite::<Rgb565, 4, 4, 16, 1>::new(Rgb565::BLACK).unwrap();
+        sprite.invalidate_all().unwrap();
+        assert_eq!(
+            sprite.dirty_regions().collect::<std::vec::Vec<_>>(),
+            std::vec![rect(0, 0, 4, 4)]
+        );
+    }
+
+    #[test]
+    fn merging_is_deterministic_across_insertion_orders() {
+        let inputs = [rect(0, 0, 2, 2), rect(5, 0, 2, 2), rect(2, 0, 3, 2)];
+        let mut forward = RegionSet::<4>::new();
+        let mut reverse = RegionSet::<4>::new();
+        for area in inputs {
+            forward.add(area).unwrap();
+        }
+        for area in inputs.into_iter().rev() {
+            reverse.add(area).unwrap();
+        }
+        assert_eq!(regions(&forward), std::vec![rect(0, 0, 7, 2)]);
+        assert_eq!(regions(&forward), regions(&reverse));
+    }
+
     #[test]
     fn tracks_dirty_regions_for_drawn_shapes() {
         let mut sprite = DirtySprite::<Rgb565, 8, 8, 64, 8>::new(Rgb565::BLACK).unwrap();
@@ -320,10 +430,9 @@ mod tests {
             .draw(&mut sprite)
             .unwrap();
 
-        let regions: std::vec::Vec<_> = sprite.dirty_regions().collect();
         assert_eq!(
-            regions,
-            std::vec![Rectangle::new(Point::new(1, 2), Size::new(3, 4))]
+            sprite.dirty_regions().collect::<std::vec::Vec<_>>(),
+            std::vec![rect(1, 2, 3, 4)]
         );
     }
 
@@ -334,5 +443,91 @@ mod tests {
             Err(err) => err,
         };
         assert_eq!(err, DirtySpriteError::BufferTooSmall);
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum TargetError {
+        WriteFailed,
+    }
+
+    struct TestTarget {
+        fail_on_call: Option<usize>,
+        calls: usize,
+        pixels: std::vec::Vec<Pixel<Rgb565>>,
+    }
+
+    impl TestTarget {
+        fn successful() -> Self {
+            Self {
+                fail_on_call: None,
+                calls: 0,
+                pixels: std::vec::Vec::new(),
+            }
+        }
+    }
+
+    impl OriginDimensions for TestTarget {
+        fn size(&self) -> Size {
+            Size::new(8, 8)
+        }
+    }
+
+    impl DrawTarget for TestTarget {
+        type Color = Rgb565;
+        type Error = TargetError;
+
+        fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+        where
+            I: IntoIterator<Item = Pixel<Self::Color>>,
+        {
+            self.calls += 1;
+            if self.fail_on_call == Some(self.calls) {
+                return Err(TargetError::WriteFailed);
+            }
+            self.pixels.extend(pixels);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn successful_flush_clears_dirty_state() {
+        let mut sprite = DirtySprite::<Rgb565, 4, 4, 16, 4>::new(Rgb565::BLACK).unwrap();
+        sprite.set_pixel(Point::new(1, 1), Rgb565::WHITE).unwrap();
+        let mut target = TestTarget::successful();
+
+        sprite.flush_dirty(&mut target).unwrap();
+
+        assert!(sprite.dirty_regions().next().is_none());
+        assert_eq!(
+            target.pixels,
+            std::vec![Pixel(Point::new(1, 1), Rgb565::WHITE)]
+        );
+    }
+
+    #[test]
+    fn failed_flush_preserves_all_dirty_state_for_retry() {
+        let mut sprite = DirtySprite::<Rgb565, 4, 4, 16, 4>::new(Rgb565::BLACK).unwrap();
+        sprite.set_pixel(Point::new(0, 0), Rgb565::WHITE).unwrap();
+        sprite.set_pixel(Point::new(3, 3), Rgb565::WHITE).unwrap();
+        let expected = sprite.dirty_regions().collect::<std::vec::Vec<_>>();
+        let mut failing = TestTarget {
+            fail_on_call: Some(2),
+            calls: 0,
+            pixels: std::vec::Vec::new(),
+        };
+
+        assert_eq!(
+            sprite.flush_dirty(&mut failing),
+            Err(TargetError::WriteFailed)
+        );
+        assert_eq!(
+            sprite.dirty_regions().collect::<std::vec::Vec<_>>(),
+            expected
+        );
+
+        let mut retry = TestTarget::successful();
+        sprite.flush_dirty(&mut retry).unwrap();
+        assert!(sprite.dirty_regions().next().is_none());
+        assert_eq!(retry.pixels.len(), 2);
     }
 }
