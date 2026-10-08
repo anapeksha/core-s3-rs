@@ -4,9 +4,12 @@
 use core_s3::{
     CoreS3,
     bsp::{
-        CoreS3DisplayOnPoweredSharedSpiResources, CoreS3GatewayH2Resources,
-        CoreS3InternalI2cResources, CoreS3SdOnSharedSpiResources, CoreS3SharedSpiParts,
-        CoreS3SharedSpiResources,
+        CoreS3DisplayOnPoweredSharedSpiResources, CoreS3GatewayH2BufferedUartResources,
+        CoreS3GatewayH2Resources, CoreS3InternalI2cResources, CoreS3SdOnSharedSpiResources,
+        CoreS3SharedSpiParts, CoreS3SharedSpiResources,
+    },
+    gateway_h2::transport::{
+        GATEWAY_H2_MIN_RX_BUFFER_SIZE, GATEWAY_H2_MIN_TX_BUFFER_SIZE, GatewayH2OpenThreadConfig,
     },
 };
 use embedded_graphics::prelude::*;
@@ -16,6 +19,12 @@ use static_cell::StaticCell;
 esp_bootloader_esp_idf::esp_app_desc!();
 
 static SHARED_SPI: StaticCell<CoreS3SharedSpiParts> = StaticCell::new();
+static H2_UART_BUFFERS: StaticCell<
+    CoreS3GatewayH2BufferedUartResources<
+        GATEWAY_H2_MIN_RX_BUFFER_SIZE,
+        GATEWAY_H2_MIN_TX_BUFFER_SIZE,
+    >,
+> = StaticCell::new();
 
 #[esp_hal::main]
 fn main() -> ! {
@@ -64,11 +73,16 @@ fn main() -> ! {
     // time. Runtime camera initialization is intentionally not performed here:
     // CoreS3 camera XCLK and Gateway H2 RX both consume GPIO2, so downstream
     // firmware must choose one owner for GPIO2 in a given hardware configuration.
-    let h2_parts = CoreS3::init_gateway_h2_openthread(CoreS3GatewayH2Resources {
-        uart1: peripherals.UART1,
-        tx: peripherals.GPIO1,
-        rx: peripherals.GPIO2,
-    })
+    let h2_buffers = H2_UART_BUFFERS.init(CoreS3GatewayH2BufferedUartResources::new());
+    let h2_parts = CoreS3::init_gateway_h2_openthread(
+        CoreS3GatewayH2Resources {
+            uart1: peripherals.UART1,
+            tx: peripherals.GPIO1,
+            rx: peripherals.GPIO2,
+        },
+        h2_buffers,
+        GatewayH2OpenThreadConfig::default(),
+    )
     .expect("Gateway H2 OpenThread UART parts");
 
     esp_println::println!(

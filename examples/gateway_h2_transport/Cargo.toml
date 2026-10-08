@@ -7,11 +7,13 @@ publish = false
 [dependencies]
 core-s3 = { workspace = true, features = ["esp-hal", "gateway-h2"] }
 embedded-graphics.workspace = true
+embedded-io-async.workspace = true
 esp-backtrace.workspace = true
 esp-bootloader-esp-idf.workspace = true
 esp-hal.workspace = true
 esp-println.workspace = true
 heapless.workspace = true
+static_cell.workspace = true
 
 [lints]
 workspace = true

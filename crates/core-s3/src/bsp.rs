@@ -5,6 +5,8 @@
 //! bus used to configure AXP2101/AW9523B display power, reset, and backlight;
 //! all other ESP peripherals remain with the application.
 
+#[cfg(feature = "gateway-h2")]
+use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use core::{
     cell::{RefCell, RefMut},
     convert::Infallible,
@@ -42,7 +44,10 @@ use crate::camera::{
     CameraCaptureError, CameraConfig, CameraFrameInfo, CameraInitError, CameraSensor,
 };
 #[cfg(feature = "gateway-h2")]
-use crate::gateway_h2::transport::GatewayH2OpenThreadConfig;
+use crate::gateway_h2::transport::{
+    GATEWAY_H2_MAX_SPINEL_FRAME_SIZE, GatewayH2BufferCapacityError, GatewayH2OpenThreadConfig,
+    validate_openthread_buffer_capacities,
+};
 use crate::{
     CoreS3, devices,
     display::{
@@ -51,6 +56,8 @@ use crate::{
     },
     sd::{CoreS3SdParts, CoreS3SdSlot},
 };
+#[cfg(feature = "gateway-h2")]
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, pipe::Pipe, signal::Signal};
 
 /// Display SPI write frequency used by M5GFX for CoreS3 after autodetection.
 pub const DISPLAY_SPI_WRITE_HZ: u32 = 40_000_000;
@@ -333,13 +340,372 @@ pub struct CoreS3GatewayH2Parts {
     pub baud: u32,
 }
 
+/// Statically allocated pipes and status shared by the Gateway H2 byte-stream
+/// endpoint and its independently polled UART pump.
+///
+/// `RX` must hold at least two maximum escaped Spinel frames and `TX` at least
+/// one. Construct this in static storage and pass a unique `&'static mut`
+/// reference to [`CoreS3::init_gateway_h2_openthread`].
+#[cfg(feature = "gateway-h2")]
+pub struct CoreS3GatewayH2BufferedUartResources<const RX: usize, const TX: usize> {
+    rx: Pipe<CriticalSectionRawMutex, RX>,
+    tx: Pipe<CriticalSectionRawMutex, TX>,
+    rx_error: AtomicU8,
+    tx_error: AtomicU8,
+    rx_error_signal: Signal<CriticalSectionRawMutex, ()>,
+    tx_error_signal: Signal<CriticalSectionRawMutex, ()>,
+    rx_bytes: AtomicU32,
+    tx_bytes: AtomicU32,
+    rx_errors: AtomicU32,
+    tx_errors: AtomicU32,
+    rx_overflows: AtomicU32,
+    tx_enqueued: AtomicU32,
+    tx_flushed: AtomicU32,
+    flush_signal: Signal<CriticalSectionRawMutex, ()>,
+}
+
+#[cfg(feature = "gateway-h2")]
+impl<const RX: usize, const TX: usize> CoreS3GatewayH2BufferedUartResources<RX, TX> {
+    /// Create empty static UART resources without allocating.
+    pub const fn new() -> Self {
+        Self {
+            rx: Pipe::new(),
+            tx: Pipe::new(),
+            rx_error: AtomicU8::new(0),
+            tx_error: AtomicU8::new(0),
+            rx_error_signal: Signal::new(),
+            tx_error_signal: Signal::new(),
+            rx_bytes: AtomicU32::new(0),
+            tx_bytes: AtomicU32::new(0),
+            rx_errors: AtomicU32::new(0),
+            tx_errors: AtomicU32::new(0),
+            rx_overflows: AtomicU32::new(0),
+            tx_enqueued: AtomicU32::new(0),
+            tx_flushed: AtomicU32::new(0),
+            flush_signal: Signal::new(),
+        }
+    }
+}
+
+#[cfg(feature = "gateway-h2")]
+impl<const RX: usize, const TX: usize> Default for CoreS3GatewayH2BufferedUartResources<RX, TX> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Typed asynchronous Gateway H2 UART stream error.
+#[cfg(feature = "gateway-h2")]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GatewayH2UartError {
+    RxFifoOverflow,
+    RxGlitch,
+    RxFrameFormat,
+    RxParity,
+    Tx,
+    PumpStopped,
+}
+
+#[cfg(feature = "gateway-h2")]
+impl core::fmt::Display for GatewayH2UartError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "Gateway H2 UART error: {self:?}")
+    }
+}
+
+#[cfg(feature = "gateway-h2")]
+impl core::error::Error for GatewayH2UartError {}
+
+#[cfg(feature = "gateway-h2")]
+impl embedded_io::Error for GatewayH2UartError {
+    fn kind(&self) -> embedded_io::ErrorKind {
+        embedded_io::ErrorKind::Other
+    }
+}
+
+/// Snapshot of byte and hardware-error counters maintained by the UART pump.
+#[cfg(feature = "gateway-h2")]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GatewayH2UartStatus {
+    pub rx_bytes: u32,
+    pub tx_bytes: u32,
+    pub rx_errors: u32,
+    pub tx_errors: u32,
+    pub rx_overflows: u32,
+}
+
+/// Buffered byte stream passed directly to an async Spinel consumer.
+#[cfg(feature = "gateway-h2")]
+pub struct CoreS3GatewayH2AsyncUart<'a, const RX: usize, const TX: usize> {
+    shared: &'a CoreS3GatewayH2BufferedUartResources<RX, TX>,
+}
+
+/// UART owner that must be polled continuously in an independent task.
+#[cfg(feature = "gateway-h2")]
+pub struct CoreS3GatewayH2UartPump<'a, const RX: usize, const TX: usize> {
+    uart: Option<Uart<'static, esp_hal::Async>>,
+    shared: &'a CoreS3GatewayH2BufferedUartResources<RX, TX>,
+}
+
 /// Gateway H2 OpenThread/Spinel-oriented UART parts.
 #[cfg(feature = "gateway-h2")]
-pub struct CoreS3GatewayH2OpenThreadParts<T = CoreS3GatewayH2Uart> {
+pub struct CoreS3GatewayH2OpenThreadParts<T, P> {
     pub transport: T,
+    pub pump: P,
     pub max_frame_size: usize,
     pub baud: u32,
     pub config: GatewayH2OpenThreadConfig,
+}
+
+#[cfg(feature = "gateway-h2")]
+impl<const RX: usize, const TX: usize> CoreS3GatewayH2AsyncUart<'_, RX, TX> {
+    /// Read current pump counters without stopping either direction.
+    pub fn status(&self) -> GatewayH2UartStatus {
+        GatewayH2UartStatus {
+            rx_bytes: self.shared.rx_bytes.load(Ordering::Relaxed),
+            tx_bytes: self.shared.tx_bytes.load(Ordering::Relaxed),
+            rx_errors: self.shared.rx_errors.load(Ordering::Relaxed),
+            tx_errors: self.shared.tx_errors.load(Ordering::Relaxed),
+            rx_overflows: self.shared.rx_overflows.load(Ordering::Relaxed),
+        }
+    }
+
+    fn take_rx_error(&self) -> Option<GatewayH2UartError> {
+        decode_gateway_h2_uart_error(self.shared.rx_error.swap(0, Ordering::AcqRel))
+    }
+
+    fn tx_error(&self) -> Option<GatewayH2UartError> {
+        decode_gateway_h2_uart_error(self.shared.tx_error.load(Ordering::Acquire))
+    }
+}
+
+#[cfg(feature = "gateway-h2")]
+impl<const RX: usize, const TX: usize> embedded_io::ErrorType
+    for CoreS3GatewayH2AsyncUart<'_, RX, TX>
+{
+    type Error = GatewayH2UartError;
+}
+
+#[cfg(feature = "gateway-h2")]
+impl<const RX: usize, const TX: usize> embedded_io_async::Read
+    for CoreS3GatewayH2AsyncUart<'_, RX, TX>
+{
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        if let Some(error) = self.take_rx_error() {
+            return Err(error);
+        }
+        match embassy_futures::select::select(
+            self.shared.rx.read(buf),
+            self.shared.rx_error_signal.wait(),
+        )
+        .await
+        {
+            embassy_futures::select::Either::First(count) => Ok(count),
+            embassy_futures::select::Either::Second(()) => {
+                Err(self.take_rx_error().unwrap_or(GatewayH2UartError::RxGlitch))
+            }
+        }
+    }
+}
+
+#[cfg(feature = "gateway-h2")]
+impl<const RX: usize, const TX: usize> embedded_io_async::Write
+    for CoreS3GatewayH2AsyncUart<'_, RX, TX>
+{
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        if let Some(error) = self.tx_error() {
+            return Err(error);
+        }
+        let count = match embassy_futures::select::select(
+            self.shared.tx.write(buf),
+            self.shared.tx_error_signal.wait(),
+        )
+        .await
+        {
+            embassy_futures::select::Either::First(count) => count,
+            embassy_futures::select::Either::Second(()) => {
+                return Err(self.tx_error().unwrap_or(GatewayH2UartError::Tx));
+            }
+        };
+        self.shared
+            .tx_enqueued
+            .fetch_add(count as u32, Ordering::Release);
+        Ok(count)
+    }
+
+    async fn flush(&mut self) -> Result<(), Self::Error> {
+        let target = self.shared.tx_enqueued.load(Ordering::Acquire);
+        loop {
+            if let Some(error) = self.tx_error() {
+                return Err(error);
+            }
+            if self.shared.tx_flushed.load(Ordering::Acquire) == target {
+                return Ok(());
+            }
+            match embassy_futures::select::select(
+                self.shared.flush_signal.wait(),
+                self.shared.tx_error_signal.wait(),
+            )
+            .await
+            {
+                embassy_futures::select::Either::First(()) => {}
+                embassy_futures::select::Either::Second(()) => {
+                    return Err(self.tx_error().unwrap_or(GatewayH2UartError::Tx));
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "gateway-h2")]
+impl<'a, const RX: usize, const TX: usize> CoreS3GatewayH2UartPump<'a, RX, TX> {
+    /// Continuously service UART RX and TX. This future is intentionally
+    /// non-terminating and must be spawned independently from the Spinel user.
+    pub async fn run(mut self) -> ! {
+        let (mut uart_rx, mut uart_tx) = self.uart.take().expect("UART pump owns UART").split();
+        let shared_rx = self.shared;
+        let shared_tx = self.shared;
+
+        let rx_loop = async move {
+            let mut buffer = [0_u8; 128];
+            loop {
+                match uart_rx.read_async(&mut buffer).await {
+                    Ok(count) => {
+                        shared_rx.rx.write_all(&buffer[..count]).await;
+                        shared_rx
+                            .rx_bytes
+                            .fetch_add(count as u32, Ordering::Relaxed);
+                    }
+                    Err(error) => {
+                        shared_rx.rx_errors.fetch_add(1, Ordering::Relaxed);
+                        let mapped = map_gateway_h2_rx_error(error);
+                        if mapped == GatewayH2UartError::RxFifoOverflow {
+                            shared_rx.rx_overflows.fetch_add(1, Ordering::Relaxed);
+                        }
+                        latch_gateway_h2_rx_error(shared_rx, mapped);
+                    }
+                }
+            }
+        };
+
+        let tx_loop = async move {
+            let mut buffer = [0_u8; 128];
+            loop {
+                let count = shared_tx.tx.read(&mut buffer).await;
+                let mut sent = 0;
+                while sent < count {
+                    match uart_tx.write_async(&buffer[sent..count]).await {
+                        Ok(written) => sent += written,
+                        Err(_error) => {
+                            shared_tx.tx_errors.fetch_add(1, Ordering::Relaxed);
+                            latch_gateway_h2_tx_error(shared_tx);
+                            core::future::pending::<()>().await;
+                        }
+                    }
+                }
+                if sent == count {
+                    if uart_tx.flush_async().await.is_err() {
+                        shared_tx.tx_errors.fetch_add(1, Ordering::Relaxed);
+                        latch_gateway_h2_tx_error(shared_tx);
+                        core::future::pending::<()>().await;
+                    } else {
+                        shared_tx
+                            .tx_bytes
+                            .fetch_add(count as u32, Ordering::Relaxed);
+                        shared_tx
+                            .tx_flushed
+                            .fetch_add(count as u32, Ordering::Release);
+                        shared_tx.flush_signal.signal(());
+                    }
+                }
+            }
+        };
+
+        embassy_futures::join::join(rx_loop, tx_loop).await;
+        unreachable!()
+    }
+}
+
+#[cfg(feature = "gateway-h2")]
+impl<const RX: usize, const TX: usize> Drop for CoreS3GatewayH2UartPump<'_, RX, TX> {
+    fn drop(&mut self) {
+        let stopped = encode_gateway_h2_uart_error(GatewayH2UartError::PumpStopped);
+        self.shared.rx_error.store(stopped, Ordering::Release);
+        self.shared.tx_error.store(stopped, Ordering::Release);
+        self.shared.rx_error_signal.signal(());
+        self.shared.tx_error_signal.signal(());
+        self.shared.flush_signal.signal(());
+    }
+}
+
+#[cfg(feature = "gateway-h2")]
+fn latch_gateway_h2_rx_error<const RX: usize, const TX: usize>(
+    shared: &CoreS3GatewayH2BufferedUartResources<RX, TX>,
+    error: GatewayH2UartError,
+) {
+    let _ = shared.rx_error.compare_exchange(
+        0,
+        encode_gateway_h2_uart_error(error),
+        Ordering::AcqRel,
+        Ordering::Relaxed,
+    );
+    shared.rx_error_signal.signal(());
+}
+
+#[cfg(feature = "gateway-h2")]
+fn latch_gateway_h2_tx_error<const RX: usize, const TX: usize>(
+    shared: &CoreS3GatewayH2BufferedUartResources<RX, TX>,
+) {
+    shared.tx_error.store(
+        encode_gateway_h2_uart_error(GatewayH2UartError::Tx),
+        Ordering::Release,
+    );
+    shared.tx_error_signal.signal(());
+    shared.flush_signal.signal(());
+}
+
+#[cfg(feature = "gateway-h2")]
+const fn encode_gateway_h2_uart_error(error: GatewayH2UartError) -> u8 {
+    match error {
+        GatewayH2UartError::RxFifoOverflow => 1,
+        GatewayH2UartError::RxGlitch => 2,
+        GatewayH2UartError::RxFrameFormat => 3,
+        GatewayH2UartError::RxParity => 4,
+        GatewayH2UartError::Tx => 5,
+        GatewayH2UartError::PumpStopped => 6,
+    }
+}
+
+#[cfg(feature = "gateway-h2")]
+const fn decode_gateway_h2_uart_error(value: u8) -> Option<GatewayH2UartError> {
+    match value {
+        1 => Some(GatewayH2UartError::RxFifoOverflow),
+        2 => Some(GatewayH2UartError::RxGlitch),
+        3 => Some(GatewayH2UartError::RxFrameFormat),
+        4 => Some(GatewayH2UartError::RxParity),
+        5 => Some(GatewayH2UartError::Tx),
+        6 => Some(GatewayH2UartError::PumpStopped),
+        _ => None,
+    }
+}
+
+#[cfg(feature = "gateway-h2")]
+fn map_gateway_h2_rx_error(error: esp_hal::uart::RxError) -> GatewayH2UartError {
+    match error {
+        esp_hal::uart::RxError::FifoOverflowed => GatewayH2UartError::RxFifoOverflow,
+        esp_hal::uart::RxError::GlitchOccurred => GatewayH2UartError::RxGlitch,
+        esp_hal::uart::RxError::FrameFormatViolated => GatewayH2UartError::RxFrameFormat,
+        esp_hal::uart::RxError::ParityMismatch => GatewayH2UartError::RxParity,
+        _ => GatewayH2UartError::RxGlitch,
+    }
 }
 
 /// LCD D/C output facade for CoreS3 shared-SPI display writes.
@@ -841,6 +1207,10 @@ pub enum BoardInitError {
     Power,
     Display,
     Uart,
+    #[cfg(feature = "gateway-h2")]
+    GatewayH2BufferTooSmall(GatewayH2BufferCapacityError),
+    #[cfg(feature = "gateway-h2")]
+    GatewayH2InvalidConfig,
     Sd,
     SharedPin,
 }
@@ -1119,15 +1489,47 @@ impl CoreS3 {
     /// must flash/select a real OpenThread RCP/NCP firmware and implement Spinel
     /// HDLC-lite framing or a custom Thread controller protocol as appropriate.
     #[cfg(feature = "gateway-h2")]
-    pub fn init_gateway_h2_openthread(
+    pub fn init_gateway_h2_openthread<const RX: usize, const TX: usize>(
         resources: CoreS3GatewayH2Resources,
-    ) -> Result<CoreS3GatewayH2OpenThreadParts, BoardInitError> {
-        let parts = Self::init_gateway_h2(resources)?;
-        let config = GatewayH2OpenThreadConfig::OPENTHREAD_RCP;
+        buffers: &'static mut CoreS3GatewayH2BufferedUartResources<RX, TX>,
+        config: GatewayH2OpenThreadConfig,
+    ) -> Result<
+        CoreS3GatewayH2OpenThreadParts<
+            CoreS3GatewayH2AsyncUart<'static, RX, TX>,
+            CoreS3GatewayH2UartPump<'static, RX, TX>,
+        >,
+        BoardInitError,
+    > {
+        validate_openthread_buffer_capacities(RX, TX)
+            .map_err(BoardInitError::GatewayH2BufferTooSmall)?;
+        if config.baud == 0
+            || config.max_frame_size == 0
+            || config.max_frame_size > GATEWAY_H2_MAX_SPINEL_FRAME_SIZE
+            || config.firmware_mode
+                != crate::gateway_h2::transport::GatewayH2FirmwareMode::OpenThreadRcp
+            || !config.hdlc_lite
+            || !config.has_crc
+        {
+            return Err(BoardInitError::GatewayH2InvalidConfig);
+        }
+        let uart = Uart::new(
+            resources.uart1,
+            UartConfig::default().with_baudrate(config.baud),
+        )
+        .map_err(|_| BoardInitError::Uart)?
+        .with_tx(resources.tx)
+        .with_rx(resources.rx)
+        .into_async();
+        let shared: &'static CoreS3GatewayH2BufferedUartResources<RX, TX> = buffers;
+
         Ok(CoreS3GatewayH2OpenThreadParts {
-            transport: parts.uart,
+            transport: CoreS3GatewayH2AsyncUart { shared },
+            pump: CoreS3GatewayH2UartPump {
+                uart: Some(uart),
+                shared,
+            },
             max_frame_size: config.max_frame_size,
-            baud: parts.baud,
+            baud: config.baud,
             config,
         })
     }
