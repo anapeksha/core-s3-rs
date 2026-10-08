@@ -21,8 +21,9 @@ use esp_backtrace as _;
 use esp_hal::{
     Blocking,
     delay::Delay,
-    dma_buffers,
-    i2s::master::{Channels, Config, DataFormat, I2s, I2sTx},
+    dma::DmaTxBuf,
+    dma_tx_buffer,
+    i2s::master::{Channels, DataFormat, I2s, I2sTx, TdmConfig},
     time::{Duration, Rate},
 };
 use heapless::String;
@@ -107,11 +108,11 @@ fn main() -> ! {
 
     draw_static_info(display, aw_probe, aw_init, aw_volume);
 
-    let (_, _, tx_buffer, tx_descriptors) = dma_buffers!(0, 4092);
+    let mut tx_buffer = dma_tx_buffer!(4092).expect("I2S TX DMA buffer");
     let Ok(i2s) = I2s::new(
         peripherals.I2S1,
         peripherals.DMA_CH1,
-        Config::new_tdm_philips()
+        TdmConfig::new_tdm_philips()
             .with_sample_rate(Rate::from_hz(SAMPLE_RATE_HZ))
             .with_data_format(DataFormat::Data16Channel16)
             .with_channels(Channels::STEREO),
@@ -127,7 +128,7 @@ fn main() -> ! {
         .with_bclk(peripherals.GPIO34)
         .with_ws(peripherals.GPIO33)
         .with_dout(peripherals.GPIO13)
-        .build(tx_descriptors);
+        .build();
 
     let mut sprite = SoundSprite::new(Rgb565::BLACK).expect("valid sound sprite");
     let mut sound_index = 0usize;
@@ -139,7 +140,11 @@ fn main() -> ! {
         draw_sound_state(display, &mut sprite, sound.name, play_count, true);
 
         let played = if let Ok(mut wav) = WavPcm16::new(sound.wav) {
-            play_source(&mut i2s_tx, tx_buffer, &mut wav)
+            let (played, returned_i2s_tx, returned_tx_buffer) =
+                play_source(i2s_tx, tx_buffer, &mut wav);
+            i2s_tx = returned_i2s_tx;
+            tx_buffer = returned_tx_buffer;
+            played
         } else {
             false
         };
@@ -239,30 +244,40 @@ fn draw_sound_state<T>(
     sprite.flush_dirty_at(display, SPRITE_ORIGIN).ok();
 }
 
-fn play_source<T>(i2s_tx: &mut I2sTx<'_, Blocking>, tx_buffer: &mut [u8], source: &mut T) -> bool
+fn play_source<'d, T>(
+    mut i2s_tx: I2sTx<'d, Blocking>,
+    mut tx_buffer: DmaTxBuf,
+    source: &mut T,
+) -> (bool, I2sTx<'d, Blocking>, DmaTxBuf)
 where
     T: AudioSource,
 {
     let mut any_audio = false;
     loop {
-        let has_more = fill_stereo_i16_buffer(tx_buffer, source);
+        let has_more = fill_stereo_i16_buffer(tx_buffer.as_mut_slice(), source);
         if !has_more && any_audio {
             break;
         }
         any_audio |= has_more;
 
-        let Ok(transfer) = i2s_tx.write_dma(&tx_buffer) else {
-            return false;
+        let transfer = match i2s_tx.write(tx_buffer) {
+            Ok(transfer) => transfer,
+            Err((_error, returned_i2s_tx, returned_tx_buffer)) => {
+                return (false, returned_i2s_tx, returned_tx_buffer);
+            }
         };
-        if transfer.wait().is_err() {
-            return false;
+        let (result, returned_i2s_tx, returned_tx_buffer) = transfer.wait();
+        i2s_tx = returned_i2s_tx;
+        tx_buffer = returned_tx_buffer;
+        if result.is_err() {
+            return (false, i2s_tx, tx_buffer);
         }
 
         if !has_more {
             break;
         }
     }
-    any_audio
+    (any_audio, i2s_tx, tx_buffer)
 }
 
 fn fill_stereo_i16_buffer<T>(buffer: &mut [u8], source: &mut T) -> bool

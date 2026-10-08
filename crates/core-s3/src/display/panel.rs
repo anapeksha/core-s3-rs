@@ -570,8 +570,11 @@ where
     ) -> Result<(), DisplayError<SpiError, PinError>> {
         let raw = color.into_storage().to_be_bytes();
         let mut chunk = [0u8; COLOR_STREAM_PIXELS * 2];
-        for pixel in chunk.chunks_exact_mut(2) {
-            pixel.copy_from_slice(&raw);
+        let mut offset = 0;
+        while offset < chunk.len() {
+            chunk[offset] = raw[0];
+            chunk[offset + 1] = raw[1];
+            offset += 2;
         }
         let mut remaining = pixels;
         while remaining > 0 {
