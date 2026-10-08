@@ -75,9 +75,11 @@ v0.5.0 supports QQVGA RGB565 and QQVGA grayscale/luminance configuration only. `
 
 M5Unified's CoreS3 battery percentage path reads AXP2101 register `0xA4` directly. `core-s3` follows that behavior through `Axp2101::battery_level_percent()` and uses voltage-derived percentage only as a coarse fallback. AXP2101 register `0x01` bits 5:6 report charging/ discharging/standby state; register `0x00` bit `0x20` reports VBUS-good external power, and bit `0x08` reports battery presence. CoreS3 does not expose battery current through the AXP2101 path used by this BSP, so current-based coulomb counting is not available via AXP2101 alone.
 
-## Matter over Thread
+## Gateway H2 OpenThread transport
 
-The `gateway-h2` feature exposes `core_s3::gateway_h2::matter`, which combines Gateway H2 transport metadata with Matter commissioning and Thread dataset configuration. The module re-exports `rs-matter` for firmware crates that instantiate a real Matter server and bind it to the ESP32-H2/Thread transport.
+The `gateway-h2` feature exposes protocol-neutral metadata/codecs and a statically buffered async UART byte stream for stock ESP32-H2 OpenThread RCP firmware. UART1 uses TX GPIO1 and RX GPIO2 at 115200 baud, 8-N-1, without hardware flow control. GPIO2 conflicts with camera XCLK, so both hardware paths cannot be initialized simultaneously.
+
+`CoreS3::init_gateway_h2_openthread(...)` returns a transport implementing `embedded_io_async 0.7::Read + Write` and a pump future. The pump exclusively owns the HAL UART and must run independently to continuously drain RX into caller-owned static storage. The BSP does not include `openthread`, `rs-matter`, datasets, commissioning, networking, or application orchestration.
 
 ## Validation checklist
 

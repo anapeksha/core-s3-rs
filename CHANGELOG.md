@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-09
+
+- Upgraded the ESP32-S3 dependency baseline to `esp-hal = "=1.2.2"` and migrated camera/I2S examples to its DMA APIs.
+- Replaced the defective blocking OpenThread UART helper with a statically allocated buffered async UART stream implementing `embedded_io_async 0.7::Read + Write`.
+- Added an independently polled full-duplex UART pump so Gateway H2 RX remains drained between application command exchanges.
+- Added bounded Spinel buffer sizing constants, capacity validation, typed UART errors, physical-flush tracking, and byte/error/overflow counters.
+- Preserved the lower-level blocking Gateway H2 UART API for diagnostics and custom protocols.
+- Updated the no-heap Gateway H2 example and migration documentation; real Gateway H2 RCP and post-upgrade LCD/SD hardware validation remain pending.
+
 ## [0.5.1] - 2026-10-07
 
 - Added scoped batched LCD transactions for the CoreS3 shared SPI bus, preserving LCD/TF-card CS and GPIO35 handoff invariants with one acquisition/restoration cycle per logical update.
