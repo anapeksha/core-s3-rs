@@ -56,6 +56,7 @@ examples/sd_block_probe/          shared-SPI embedded-sdmmc capacity probe
 examples/display_sd_coexist/      alternating LCD + raw SD read/write coexistence test
 examples/camera_capture/          GC0308 live LCD preview and bounded DMA capture demo
 examples/gateway_h2_transport/    H2 framing smoke-test shell
+examples/gateway_h2_openthread/   openthread 0.4.0 UartSpinelTransport integration
 examples/full_board_demo/         board overview smoke-test shell
 .github/workflows/                PR validation and firmware release automation
 ```
@@ -206,7 +207,7 @@ cargo +esp run -p display_widgets --release --target xtensa-esp32s3-none-elf
 
 ## v0.5.2 Gateway H2 migration
 
-`init_gateway_h2_openthread` now requires static pipe resources and returns both `transport` and `pump`. Spawn `pump.run()` in an independent task before handing `transport` to `openthread::spinel::UartSpinelTransport`. The transport directly implements `embedded_io_async 0.7::Read + Write`; the BSP still has no OpenThread dependency. The lower-level blocking `init_gateway_h2` API remains available for diagnostics and custom protocols.
+`init_gateway_h2_openthread` now requires static pipe resources and returns both `transport` and `pump`. Spawn `pump.run()` in an independent task before handing `transport` to `openthread::spinel::UartSpinelTransport`. `examples/gateway_h2_openthread` compile-checks this exact integration against `openthread = "=0.4.0"`; Xtensa builds must enable OpenThread's `rcp` and `use-gcc` features. The transport directly implements `embedded_io_async 0.7::Read + Write`; the BSP still has no OpenThread dependency. The lower-level blocking `init_gateway_h2` API remains available for diagnostics and custom protocols.
 
 ```rust
 static H2_BUFFERS: StaticCell<CoreS3GatewayH2BufferedUartResources<

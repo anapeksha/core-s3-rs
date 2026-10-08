@@ -20,6 +20,7 @@ members = [
     "examples/display_sd_coexist",
     "examples/camera_capture",
     "examples/gateway_h2_transport",
+    "examples/gateway_h2_openthread",
     "examples/full_board_demo",
 ]
 
@@ -46,6 +47,7 @@ embedded-hal-bus = { version = "0.3.0", default-features = false }
 embedded-io = { version = "0.7.1", default-features = false }
 embedded-io-async = { version = "0.7.0", default-features = false }
 embedded-sdmmc = { version = "0.8.1", default-features = false }
+embassy-executor = { version = "0.10.0", default-features = false, features = ["executor-thread", "platform-spin"] }
 embassy-futures = { version = "0.1.2", default-features = false }
 embassy-sync = { version = "0.8.0", default-features = false }
 esp-alloc = { version = "=0.10.0", default-features = true, features = ["esp32s3"] }
@@ -58,6 +60,7 @@ esp-radio-rtos-driver = { version = "=0.3.0", default-features = false }
 esp-rom-sys = { version = "=0.1.4", default-features = false }
 esp-storage = { version = "=0.7.0", default-features = false, features = ["esp32s3"] }
 heapless = { version = "0.9.3", default-features = false }
+openthread = { version = "=0.4.0", default-features = false, features = ["rcp", "use-gcc"] }
 
 static_cell = "2.1.1"
 

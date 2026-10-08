@@ -11,7 +11,7 @@ All notable changes to this project will be documented in this file.
 - Added an independently polled full-duplex UART pump so Gateway H2 RX remains drained between application command exchanges.
 - Added bounded Spinel buffer sizing constants, capacity validation, typed UART errors, physical-flush tracking, and byte/error/overflow counters.
 - Preserved the lower-level blocking Gateway H2 UART API for diagnostics and custom protocols.
-- Updated the no-heap Gateway H2 example and migration documentation; real Gateway H2 RCP and post-upgrade LCD/SD hardware validation remain pending.
+- Added a no-heap `openthread 0.4.0` example that spawns the BSP UART pump and constructs the real `UartSpinelTransport`; real Gateway H2 RCP and post-upgrade LCD/SD hardware validation remain pending.
 
 ## [0.5.1] - 2026-10-07
 
