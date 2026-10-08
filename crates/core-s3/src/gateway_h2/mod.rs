@@ -26,6 +26,9 @@ pub struct UartPins {
 impl GatewayH2 {
     /// Default Grove-port UART wiring. Validate against your exact base/stack
     /// revision before enabling bootloader-reset automation.
+    ///
+    /// RX uses GPIO2, which is also CoreS3 camera XCLK. The camera and Gateway
+    /// H2 UART cannot own that physical pin at the same time.
     pub const GROVE_UART: Self = Self {
         host_uart: UartPins {
             tx: GrovePortPins::PORT_A.pin1,

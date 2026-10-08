@@ -18,6 +18,41 @@ pub const MAX_PAYLOAD: usize = 128;
 pub const DEFAULT_GATEWAY_H2_BAUD: u32 = 115_200;
 /// Conservative maximum Spinel frame payload size for application-owned buffers.
 pub const DEFAULT_SPINEL_MAX_FRAME_SIZE: usize = 2048;
+/// Stock Gateway H2 OpenThread RCP UART baud used by the CoreS3 host link.
+pub const GATEWAY_H2_OPENTHREAD_BAUD: u32 = DEFAULT_GATEWAY_H2_BAUD;
+/// Maximum decoded Spinel frame accepted by the transport contract.
+pub const GATEWAY_H2_MAX_SPINEL_FRAME_SIZE: usize = DEFAULT_SPINEL_MAX_FRAME_SIZE;
+/// Worst-case HDLC-lite bytes for one maximum frame, including FCS and flags.
+pub const GATEWAY_H2_MAX_ENCODED_SPINEL_FRAME_SIZE: usize =
+    (GATEWAY_H2_MAX_SPINEL_FRAME_SIZE + 2) * 2 + 2;
+/// Minimum RX buffering: two worst-case encoded frames.
+pub const GATEWAY_H2_MIN_RX_BUFFER_SIZE: usize = GATEWAY_H2_MAX_ENCODED_SPINEL_FRAME_SIZE * 2;
+/// Minimum TX buffering: one worst-case encoded frame.
+pub const GATEWAY_H2_MIN_TX_BUFFER_SIZE: usize = GATEWAY_H2_MAX_ENCODED_SPINEL_FRAME_SIZE;
+
+/// Validate statically allocated OpenThread UART pipe capacities.
+pub const fn validate_openthread_buffer_capacities(
+    rx: usize,
+    tx: usize,
+) -> Result<(), GatewayH2BufferCapacityError> {
+    if rx < GATEWAY_H2_MIN_RX_BUFFER_SIZE {
+        Err(GatewayH2BufferCapacityError::RxTooSmall)
+    } else if tx < GATEWAY_H2_MIN_TX_BUFFER_SIZE {
+        Err(GatewayH2BufferCapacityError::TxTooSmall)
+    } else {
+        Ok(())
+    }
+}
+
+/// Invalid static UART pipe capacity.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GatewayH2BufferCapacityError {
+    /// RX cannot retain two worst-case HDLC-lite frames.
+    RxTooSmall,
+    /// TX cannot retain one worst-case HDLC-lite frame.
+    TxTooSmall,
+}
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -156,6 +191,12 @@ pub struct GatewayH2OpenThreadConfig {
     pub has_crc: bool,
 }
 
+impl Default for GatewayH2OpenThreadConfig {
+    fn default() -> Self {
+        Self::OPENTHREAD_RCP
+    }
+}
+
 impl GatewayH2OpenThreadConfig {
     /// Conservative defaults for an ESP32-H2 running OpenThread RCP firmware.
     pub const OPENTHREAD_RCP: Self = Self {
@@ -266,6 +307,35 @@ mod tests {
         let bytes = frame.encode::<16>().unwrap();
         let decoded = H2Frame::<16>::decode(&bytes).unwrap();
         assert_eq!(decoded, frame);
+    }
+
+    #[test]
+    fn validates_buffer_capacities() {
+        assert_eq!(
+            validate_openthread_buffer_capacities(
+                GATEWAY_H2_MIN_RX_BUFFER_SIZE - 1,
+                GATEWAY_H2_MIN_TX_BUFFER_SIZE
+            ),
+            Err(GatewayH2BufferCapacityError::RxTooSmall)
+        );
+        assert_eq!(
+            validate_openthread_buffer_capacities(
+                GATEWAY_H2_MIN_RX_BUFFER_SIZE,
+                GATEWAY_H2_MIN_TX_BUFFER_SIZE - 1
+            ),
+            Err(GatewayH2BufferCapacityError::TxTooSmall)
+        );
+        assert_eq!(
+            validate_openthread_buffer_capacities(
+                GATEWAY_H2_MIN_RX_BUFFER_SIZE,
+                GATEWAY_H2_MIN_TX_BUFFER_SIZE
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            GatewayH2OpenThreadConfig::default(),
+            GatewayH2OpenThreadConfig::OPENTHREAD_RCP
+        );
     }
 
     #[test]

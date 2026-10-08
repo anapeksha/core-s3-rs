@@ -1,6 +1,6 @@
 [package]
 name = "core-s3"
-version = "0.5.1"
+version = "0.5.2"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -19,7 +19,12 @@ camera = ["esp-hal"]
 defmt = ["dep:defmt", "heapless/defmt"]
 esp-hal = ["dep:critical-section", "dep:embedded-hal-bus", "dep:esp-hal"]
 sdmmc = ["dep:embedded-sdmmc"]
-gateway-h2 = []
+gateway-h2 = [
+    "dep:embassy-futures",
+    "dep:embassy-sync",
+    "dep:embedded-io",
+    "dep:embedded-io-async",
+]
 
 [dependencies]
 critical-section = { workspace = true, optional = true }
@@ -28,7 +33,11 @@ embedded-graphics.workspace = true
 embedded-hal.workspace = true
 embedded-hal-async.workspace = true
 embedded-hal-bus = { workspace = true, optional = true }
+embedded-io = { workspace = true, optional = true }
+embedded-io-async = { workspace = true, optional = true }
 embedded-sdmmc = { workspace = true, optional = true }
+embassy-futures = { workspace = true, optional = true }
+embassy-sync = { workspace = true, optional = true }
 heapless.workspace = true
 
 

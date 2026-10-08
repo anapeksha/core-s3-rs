@@ -17,7 +17,7 @@ use embedded_graphics::{
     text::Text,
 };
 use esp_backtrace as _;
-use esp_hal::{delay::Delay, dma::DmaRxBuf, dma_buffers};
+use esp_hal::{delay::Delay, dma_rx_buffer};
 use esp_println::println;
 use heapless::String;
 
@@ -98,8 +98,8 @@ fn main() -> ! {
         if touch_ready { "OK" } else { "unavailable" }
     );
 
-    let (rx_buffer, rx_descriptors, _, _) = dma_buffers!(QQVGA_RGB565_FRAME_BUFFER_BYTES, 0);
-    let mut dma_buffer = DmaRxBuf::new(rx_descriptors, rx_buffer).expect("camera DMA buffer");
+    let mut dma_buffer =
+        dma_rx_buffer!(QQVGA_RGB565_FRAME_BUFFER_BYTES).expect("camera DMA buffer");
 
     match camera.capture_dma_frame(dma_buffer) {
         Ok((_, returned)) => {
@@ -108,9 +108,8 @@ fn main() -> ! {
         }
         Err(error) => {
             println!("capture before start returned {:?}", error);
-            let (rx_buffer, rx_descriptors, _, _) =
-                dma_buffers!(QQVGA_RGB565_FRAME_BUFFER_BYTES, 0);
-            dma_buffer = DmaRxBuf::new(rx_descriptors, rx_buffer).expect("replacement DMA buffer");
+            dma_buffer =
+                dma_rx_buffer!(QQVGA_RGB565_FRAME_BUFFER_BYTES).expect("replacement DMA buffer");
         }
     }
 
@@ -177,10 +176,8 @@ fn main() -> ! {
                     errors,
                     0,
                 );
-                let (rx_buffer, rx_descriptors, _, _) =
-                    dma_buffers!(QQVGA_RGB565_FRAME_BUFFER_BYTES, 0);
-                dma_buffer =
-                    DmaRxBuf::new(rx_descriptors, rx_buffer).expect("replacement DMA buffer");
+                dma_buffer = dma_rx_buffer!(QQVGA_RGB565_FRAME_BUFFER_BYTES)
+                    .expect("replacement DMA buffer");
                 camera.stop();
                 camera.start().expect("camera restart");
             }

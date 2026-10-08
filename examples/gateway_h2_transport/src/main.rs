@@ -5,8 +5,11 @@ use core::fmt::Write;
 
 use core_s3::{
     CoreS3,
-    bsp::{CoreS3DisplayResources, CoreS3GatewayH2Resources},
-    gateway_h2::transport::{FrameKind, H2Frame, TransportError},
+    bsp::{CoreS3DisplayResources, CoreS3GatewayH2BufferedUartResources, CoreS3GatewayH2Resources},
+    gateway_h2::transport::{
+        FrameKind, GATEWAY_H2_MIN_RX_BUFFER_SIZE, GATEWAY_H2_MIN_TX_BUFFER_SIZE,
+        GatewayH2OpenThreadConfig, H2Frame, TransportError,
+    },
     ui::{Label, StatusBar, Theme},
 };
 use embedded_graphics::{
@@ -18,8 +21,16 @@ use embedded_graphics::{
 };
 use esp_backtrace as _;
 use heapless::{String, Vec};
+use static_cell::StaticCell;
 
 esp_bootloader_esp_idf::esp_app_desc!();
+
+static H2_UART_BUFFERS: StaticCell<
+    CoreS3GatewayH2BufferedUartResources<
+        GATEWAY_H2_MIN_RX_BUFFER_SIZE,
+        GATEWAY_H2_MIN_TX_BUFFER_SIZE,
+    >,
+> = StaticCell::new();
 
 #[esp_hal::main]
 fn main() -> ! {
@@ -37,11 +48,21 @@ fn main() -> ! {
     })
     .expect("display");
 
-    let h2 = CoreS3::init_gateway_h2(CoreS3GatewayH2Resources {
-        uart1: peripherals.UART1,
-        tx: peripherals.GPIO1,
-        rx: peripherals.GPIO2,
-    });
+    let h2_buffers = H2_UART_BUFFERS.init(CoreS3GatewayH2BufferedUartResources::new());
+    let h2 = CoreS3::init_gateway_h2_openthread(
+        CoreS3GatewayH2Resources {
+            uart1: peripherals.UART1,
+            tx: peripherals.GPIO1,
+            rx: peripherals.GPIO2,
+        },
+        h2_buffers,
+        GatewayH2OpenThreadConfig::default(),
+    );
+    if let Ok(parts) = h2.as_ref() {
+        requires_spinel_io(&parts.transport);
+        // Production firmware must spawn `parts.pump.run()` independently before
+        // handing `parts.transport` to UartSpinelTransport.
+    }
 
     let frame = H2Frame::<32>::new(FrameKind::Request, 1, b"state");
     let encoded = frame.encode::<64>();
@@ -156,6 +177,12 @@ fn main() -> ! {
     loop {
         core::hint::spin_loop();
     }
+}
+
+fn requires_spinel_io<T>(_: &T)
+where
+    T: embedded_io_async::Read + embedded_io_async::Write,
+{
 }
 
 fn corrupt_last_byte<const N: usize>(bytes: &Vec<u8, N>) -> Vec<u8, N> {
