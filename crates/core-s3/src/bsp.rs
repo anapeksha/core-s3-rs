@@ -6,7 +6,7 @@
 //! all other ESP peripherals remain with the application.
 
 #[cfg(feature = "gateway-h2")]
-use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use core::{
     cell::{RefCell, RefMut},
     convert::Infallible,
@@ -45,7 +45,9 @@ use crate::camera::{
 };
 #[cfg(feature = "gateway-h2")]
 use crate::gateway_h2::transport::{
-    GATEWAY_H2_MAX_SPINEL_FRAME_SIZE, GatewayH2BufferCapacityError, GatewayH2OpenThreadConfig,
+    GATEWAY_H2_ENTER_BOOTLOADER_SEQUENCE, GATEWAY_H2_LEAVE_BOOTLOADER_SEQUENCE,
+    GATEWAY_H2_RESET_SEQUENCE, GatewayH2BufferCapacityError, GatewayH2ControlMode,
+    GatewayH2ControlStep, GatewayH2OpenThreadConfig, tx_sequence_reached,
     validate_openthread_buffer_capacities,
 };
 use crate::{
@@ -325,18 +327,110 @@ impl CoreS3Camera {
     }
 }
 
-/// ESP-HAL resources required to initialize the Gateway H2 UART link.
+/// ESP-HAL resources for the officially stacked CoreS3 Module Gateway H2.
+///
+/// UART is fixed to CoreS3 TX GPIO10 -> H2 RXD and CoreS3 RX GPIO17 <- H2
+/// TXD. GPIO7 owns active-low H2 EN/reset and GPIO18 owns H2 GPIO9/BOOT.
+#[cfg(feature = "gateway-h2")]
 pub struct CoreS3GatewayH2Resources {
     pub uart1: esp_hal::peripherals::UART1<'static>,
-    /// CoreS3 Grove Port A pin 1, used as host UART TX.
-    pub tx: esp_hal::peripherals::GPIO1<'static>,
-    /// CoreS3 Grove Port A pin 2, used as host UART RX.
-    pub rx: esp_hal::peripherals::GPIO2<'static>,
+    /// CoreS3 host TX connected to Gateway H2 RXD.
+    pub tx: esp_hal::peripherals::GPIO10<'static>,
+    /// CoreS3 host RX connected to Gateway H2 TXD.
+    pub rx: esp_hal::peripherals::GPIO17<'static>,
+    /// Active-low ESP32-H2 enable/reset.
+    pub enable: esp_hal::peripherals::GPIO7<'static>,
+    /// ESP32-H2 GPIO9 ROM-download strap; low requests download mode.
+    pub boot: esp_hal::peripherals::GPIO18<'static>,
+}
+
+/// Safe owner of the fixed Gateway H2 EN and GPIO9/BOOT control lines.
+#[cfg(feature = "gateway-h2")]
+pub struct CoreS3GatewayH2Control {
+    enable: CoreS3Output,
+    boot: CoreS3Output,
+    mode: GatewayH2ControlMode,
+    pump_active: Option<&'static AtomicBool>,
+}
+
+/// Gateway H2 control transition error.
+#[cfg(feature = "gateway-h2")]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GatewayH2ControlError {
+    /// Stop/drop the UART pump before resetting or changing the boot strap.
+    TransportActive,
+}
+
+#[cfg(feature = "gateway-h2")]
+impl CoreS3GatewayH2Control {
+    /// Return the last operating mode requested through this control object.
+    pub const fn requested_mode(&self) -> GatewayH2ControlMode {
+        self.mode
+    }
+
+    /// Pulse active-low EN while keeping GPIO9/BOOT deasserted.
+    pub fn hardware_reset(
+        &mut self,
+        delay: &mut impl DelayNs,
+    ) -> Result<(), GatewayH2ControlError> {
+        self.ensure_transport_stopped()?;
+        self.apply_sequence(delay, &GATEWAY_H2_RESET_SEQUENCE);
+        self.mode = GatewayH2ControlMode::Normal;
+        Ok(())
+    }
+
+    /// Assert GPIO9 low before raising EN to enter the ESP32-H2 ROM bootloader.
+    pub fn enter_bootloader(
+        &mut self,
+        delay: &mut impl DelayNs,
+    ) -> Result<(), GatewayH2ControlError> {
+        self.ensure_transport_stopped()?;
+        self.apply_sequence(delay, &GATEWAY_H2_ENTER_BOOTLOADER_SEQUENCE);
+        self.mode = GatewayH2ControlMode::Bootloader;
+        Ok(())
+    }
+
+    /// Deassert GPIO9 before raising EN to restart normal RCP firmware.
+    pub fn leave_bootloader(
+        &mut self,
+        delay: &mut impl DelayNs,
+    ) -> Result<(), GatewayH2ControlError> {
+        self.ensure_transport_stopped()?;
+        self.apply_sequence(delay, &GATEWAY_H2_LEAVE_BOOTLOADER_SEQUENCE);
+        self.mode = GatewayH2ControlMode::Normal;
+        Ok(())
+    }
+
+    fn ensure_transport_stopped(&self) -> Result<(), GatewayH2ControlError> {
+        if self
+            .pump_active
+            .is_some_and(|active| active.load(Ordering::Acquire))
+        {
+            Err(GatewayH2ControlError::TransportActive)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn apply_sequence(&mut self, delay: &mut impl DelayNs, sequence: &[GatewayH2ControlStep]) {
+        for step in sequence {
+            match step {
+                GatewayH2ControlStep::EnableLow => self.enable.set_low(),
+                GatewayH2ControlStep::EnableHigh => self.enable.set_high(),
+                GatewayH2ControlStep::BootLow => self.boot.set_low(),
+                GatewayH2ControlStep::BootHigh => self.boot.set_high(),
+                GatewayH2ControlStep::DelayMs(milliseconds) => delay.delay_ms(*milliseconds),
+            }
+        }
+    }
 }
 
 /// Initialized Gateway H2 host UART link.
+#[cfg(feature = "gateway-h2")]
 pub struct CoreS3GatewayH2Parts {
     pub uart: CoreS3GatewayH2Uart,
+    pub control: CoreS3GatewayH2Control,
     pub baud: u32,
 }
 
@@ -354,6 +448,7 @@ pub struct CoreS3GatewayH2BufferedUartResources<const RX: usize, const TX: usize
     tx_error: AtomicU8,
     rx_error_signal: Signal<CriticalSectionRawMutex, ()>,
     tx_error_signal: Signal<CriticalSectionRawMutex, ()>,
+    pump_active: AtomicBool,
     rx_bytes: AtomicU32,
     tx_bytes: AtomicU32,
     rx_errors: AtomicU32,
@@ -375,6 +470,7 @@ impl<const RX: usize, const TX: usize> CoreS3GatewayH2BufferedUartResources<RX, 
             tx_error: AtomicU8::new(0),
             rx_error_signal: Signal::new(),
             tx_error_signal: Signal::new(),
+            pump_active: AtomicBool::new(false),
             rx_bytes: AtomicU32::new(0),
             tx_bytes: AtomicU32::new(0),
             rx_errors: AtomicU32::new(0),
@@ -431,6 +527,8 @@ impl embedded_io::Error for GatewayH2UartError {
 pub struct GatewayH2UartStatus {
     pub rx_bytes: u32,
     pub tx_bytes: u32,
+    pub tx_enqueued: u32,
+    pub tx_flushed: u32,
     pub rx_errors: u32,
     pub tx_errors: u32,
     pub rx_overflows: u32,
@@ -454,6 +552,7 @@ pub struct CoreS3GatewayH2UartPump<'a, const RX: usize, const TX: usize> {
 pub struct CoreS3GatewayH2OpenThreadParts<T, P> {
     pub transport: T,
     pub pump: P,
+    pub control: CoreS3GatewayH2Control,
     pub max_frame_size: usize,
     pub baud: u32,
     pub config: GatewayH2OpenThreadConfig,
@@ -466,6 +565,8 @@ impl<const RX: usize, const TX: usize> CoreS3GatewayH2AsyncUart<'_, RX, TX> {
         GatewayH2UartStatus {
             rx_bytes: self.shared.rx_bytes.load(Ordering::Relaxed),
             tx_bytes: self.shared.tx_bytes.load(Ordering::Relaxed),
+            tx_enqueued: self.shared.tx_enqueued.load(Ordering::Relaxed),
+            tx_flushed: self.shared.tx_flushed.load(Ordering::Relaxed),
             rx_errors: self.shared.rx_errors.load(Ordering::Relaxed),
             tx_errors: self.shared.tx_errors.load(Ordering::Relaxed),
             rx_overflows: self.shared.rx_overflows.load(Ordering::Relaxed),
@@ -547,7 +648,7 @@ impl<const RX: usize, const TX: usize> embedded_io_async::Write
             if let Some(error) = self.tx_error() {
                 return Err(error);
             }
-            if self.shared.tx_flushed.load(Ordering::Acquire) == target {
+            if tx_sequence_reached(self.shared.tx_flushed.load(Ordering::Acquire), target) {
                 return Ok(());
             }
             match embassy_futures::select::select(
@@ -570,6 +671,7 @@ impl<'a, const RX: usize, const TX: usize> CoreS3GatewayH2UartPump<'a, RX, TX> {
     /// Continuously service UART RX and TX. This future is intentionally
     /// non-terminating and must be spawned independently from the Spinel user.
     pub async fn run(mut self) -> ! {
+        self.shared.pump_active.store(true, Ordering::Release);
         let (mut uart_rx, mut uart_tx) = self.uart.take().expect("UART pump owns UART").split();
         let shared_rx = self.shared;
         let shared_tx = self.shared;
@@ -637,6 +739,7 @@ impl<'a, const RX: usize, const TX: usize> CoreS3GatewayH2UartPump<'a, RX, TX> {
 #[cfg(feature = "gateway-h2")]
 impl<const RX: usize, const TX: usize> Drop for CoreS3GatewayH2UartPump<'_, RX, TX> {
     fn drop(&mut self) {
+        self.shared.pump_active.store(false, Ordering::Release);
         let stopped = encode_gateway_h2_uart_error(GatewayH2UartError::PumpStopped);
         self.shared.rx_error.store(stopped, Ordering::Release);
         self.shared.tx_error.store(stopped, Ordering::Release);
@@ -1502,14 +1605,7 @@ impl CoreS3 {
     > {
         validate_openthread_buffer_capacities(RX, TX)
             .map_err(BoardInitError::GatewayH2BufferTooSmall)?;
-        if config.baud == 0
-            || config.max_frame_size == 0
-            || config.max_frame_size > GATEWAY_H2_MAX_SPINEL_FRAME_SIZE
-            || config.firmware_mode
-                != crate::gateway_h2::transport::GatewayH2FirmwareMode::OpenThreadRcp
-            || !config.hdlc_lite
-            || !config.has_crc
-        {
+        if !config.is_valid() {
             return Err(BoardInitError::GatewayH2InvalidConfig);
         }
         let uart = Uart::new(
@@ -1521,6 +1617,11 @@ impl CoreS3 {
         .with_rx(resources.rx)
         .into_async();
         let shared: &'static CoreS3GatewayH2BufferedUartResources<RX, TX> = buffers;
+        let control = configure_gateway_h2_control(
+            resources.enable,
+            resources.boot,
+            Some(&shared.pump_active),
+        );
 
         Ok(CoreS3GatewayH2OpenThreadParts {
             transport: CoreS3GatewayH2AsyncUart { shared },
@@ -1528,14 +1629,16 @@ impl CoreS3 {
                 uart: Some(uart),
                 shared,
             },
+            control,
             max_frame_size: config.max_frame_size,
             baud: config.baud,
             config,
         })
     }
 
-    /// Initializes only the Gateway H2 host UART link on Grove Port A and leaves
-    /// all unrelated ESP peripherals untouched.
+    /// Initializes the officially stacked Gateway H2 UART and EN/BOOT controls.
+    /// Optional H2 SPI and PTA pins remain unconsumed.
+    #[cfg(feature = "gateway-h2")]
     pub fn init_gateway_h2(
         resources: CoreS3GatewayH2Resources,
     ) -> Result<CoreS3GatewayH2Parts, BoardInitError> {
@@ -1546,12 +1649,35 @@ impl CoreS3 {
         .map_err(|_| BoardInitError::Uart)?
         .with_tx(resources.tx)
         .with_rx(resources.rx);
+        let control = configure_gateway_h2_control(resources.enable, resources.boot, None);
 
         Ok(CoreS3GatewayH2Parts {
             uart,
+            control,
             baud: GATEWAY_H2_UART_BAUD,
         })
     }
+}
+
+#[cfg(feature = "gateway-h2")]
+fn configure_gateway_h2_control(
+    enable: esp_hal::peripherals::GPIO7<'static>,
+    boot: esp_hal::peripherals::GPIO18<'static>,
+    pump_active: Option<&'static AtomicBool>,
+) -> CoreS3GatewayH2Control {
+    // Keep EN low until GPIO9/BOOT is explicitly deasserted. This prevents a
+    // CoreS3 reset from accidentally sampling the ESP32-H2 download strap low.
+    let enable = Output::new(enable, Level::Low, OutputConfig::default());
+    let boot = Output::new(boot, Level::High, OutputConfig::default());
+    let mut control = CoreS3GatewayH2Control {
+        enable,
+        boot,
+        mode: GatewayH2ControlMode::Normal,
+        pump_active,
+    };
+    let mut delay = Delay::new();
+    control.apply_sequence(&mut delay, &GATEWAY_H2_RESET_SEQUENCE);
+    control
 }
 
 fn configure_i2c(

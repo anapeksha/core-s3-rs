@@ -71,14 +71,16 @@ fn main() -> ! {
     // The downstream compatibility crate enables `core-s3`'s `camera` feature too,
     // proving the camera module can coexist with display/SD/Gateway-H2 at build
     // time. Runtime camera initialization is intentionally not performed here:
-    // CoreS3 camera XCLK and Gateway H2 RX both consume GPIO2, so downstream
-    // firmware must choose one owner for GPIO2 in a given hardware configuration.
+    // Camera and stacked Gateway H2 use disjoint fixed pins. This compile check
+    // intentionally leaves optional H2 SPI/PTA routes unowned by the UART API.
     let h2_buffers = H2_UART_BUFFERS.init(CoreS3GatewayH2BufferedUartResources::new());
     let h2_parts = CoreS3::init_gateway_h2_openthread(
         CoreS3GatewayH2Resources {
             uart1: peripherals.UART1,
-            tx: peripherals.GPIO1,
-            rx: peripherals.GPIO2,
+            tx: peripherals.GPIO10,
+            rx: peripherals.GPIO17,
+            enable: peripherals.GPIO7,
+            boot: peripherals.GPIO18,
         },
         h2_buffers,
         GatewayH2OpenThreadConfig::default(),

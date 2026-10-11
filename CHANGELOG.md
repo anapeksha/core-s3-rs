@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-10-11
+
+- Corrected the officially stacked Module Gateway H2 UART from erroneous PORT.A GPIO1/GPIO2 to CoreS3 TX GPIO10 and RX GPIO17.
+- Added BSP-owned GPIO7 EN/reset and GPIO18 GPIO9/BOOT control with bounded normal-reset, enter-bootloader, and leave-bootloader sequences.
+- Added requested control mode plus RX/TX/enqueued/flushed/error/overflow diagnostics without claiming Spinel or Thread readiness.
+- Added official stacked-module metadata and explicit expected optional-routing metadata; UART-only is the safe OpenThread default.
+- Documented schematic-verified S1 routing, required UART-only switch positions, LCD/SD/audio conflicts, and unsupported unmanaged H2 SPI.
+- Updated all Gateway H2 examples, including the real `openthread 0.4.0` `UartSpinelTransport` compile integration, to own GPIO10/GPIO17/GPIO7/GPIO18.
+
 ## [0.5.2] - 2026-10-09
 
 - Upgraded the ESP32-S3 dependency baseline to `esp-hal = "=1.2.2"` and migrated camera/I2S examples to its DMA APIs.

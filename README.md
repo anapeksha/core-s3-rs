@@ -16,7 +16,7 @@ The crate is intentionally `#![no_std]` and keeps the reusable BSP layer modular
 - feature-gated Gateway H2 UART/framing/OpenThread transport surfaces and Spinel HDLC-lite codec behind `gateway-h2`
 - optional TF-card SD parts compatible with `embedded-sdmmc`
 
-> Hardware note: v0.5.2 uses `esp-hal = "=1.2.2"`. The shared LCD/TF-card SPI API retains the hardware-validated GPIO35 D/C↔MISO handoff, SD-before-LCD acquisition flow, and safe-idle cleanup from v0.5.1. The new buffered Gateway H2 transport is software-validated but still requires validation with a real CoreS3 and Gateway H2 running stock `ot-rcp` firmware.
+> Hardware note: v0.5.3 uses `esp-hal = "=1.2.2"` and corrects the stacked Module Gateway H2 mapping to UART1 TX GPIO10, RX GPIO17, EN GPIO7, and GPIO9/BOOT GPIO18. The shared LCD/TF-card SPI API retains the hardware-validated GPIO35 D/C↔MISO handoff, SD-before-LCD acquisition flow, and safe-idle cleanup from v0.5.1. Gateway H2 v0.5.3 is software-validated; real RCP hardware validation remains explicitly pending.
 
 ## Peripheral support
 
@@ -31,7 +31,7 @@ The crate is intentionally `#![no_std]` and keeps the reusable BSP layer modular
 | BM8563 RTC            | I2C `0x51`                                                                                                 | get/set date-time, alarms, timer metadata                                                                                |
 | ES7210 microphone ADC | I2C `0x40`, I2S GPIO0/34/33/13/14                                                                          | configuration helper; I2S DMA remains app/HAL-owned                                                                      |
 | AW88298 speaker amp   | I2C `0x36`, I2S GPIO0/34/33/13/14                                                                          | configuration helper; I2S DMA remains app/HAL-owned                                                                      |
-| Gateway H2            | UART1, TX GPIO1, RX GPIO2, 115200 baud                                                                     | UART bring-up, small request/response/event framing, OpenThread/Spinel transport traits, and Spinel HDLC-lite codec      |
+| Gateway H2            | UART1 TX GPIO10, RX GPIO17, EN GPIO7, GPIO9/BOOT GPIO18                                                    | safe control, buffered async UART, bounded diagnostics, OpenThread 0.4 Spinel compatibility                              |
 | TF-card slot          | SCLK GPIO36, MOSI GPIO37, MISO GPIO35, CS GPIO4                                                            | slot metadata, card-detect helper, shared-SPI `SpiDevice` parts, optional `embedded-sdmmc::SdCard` conversion            |
 | GC0308 camera         | XCLK GPIO2, PCLK GPIO45, VSYNC GPIO46, HREF GPIO38, D0..D7 GPIO39/40/41/42/15/16/48/47, SCCB GPIO12/GPIO11 | feature-gated `camera` API, sensor probe/config, QQVGA RGB565/grayscale metadata, ESP-HAL LCD_CAM DMA capture wrapper    |
 
@@ -63,13 +63,13 @@ examples/full_board_demo/         board overview smoke-test shell
 
 ## Features
 
-| Feature      | Description                                                                                                                                          |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `defmt`      | Enables `defmt` formatting for supported dependency-free public types.                                                                               |
-| `camera`     | Enables `core_s3::camera` and ESP-HAL-backed CoreS3 GC0308/LCD_CAM bring-up helpers. Implies `esp-hal`.                                              |
-| `esp-hal`    | Enables ESP-HAL-backed CoreS3 bring-up helpers on Xtensa ESP32-S3 targets.                                                                           |
-| `gateway-h2` | Exposes Gateway H2 metadata/codecs plus the statically buffered async UART transport and pump. Basic blocking UART bring-up remains under `esp-hal`. |
-| `sdmmc`      | Enables conversion from BSP SD parts into `embedded_sdmmc::SdCard<SPI, DELAY>`.                                                                      |
+| Feature      | Description                                                                                                                                   |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `defmt`      | Enables `defmt` formatting for supported dependency-free public types.                                                                        |
+| `camera`     | Enables `core_s3::camera` and ESP-HAL-backed CoreS3 GC0308/LCD_CAM bring-up helpers. Implies `esp-hal`.                                       |
+| `esp-hal`    | Enables ESP-HAL-backed CoreS3 bring-up helpers on Xtensa ESP32-S3 targets.                                                                    |
+| `gateway-h2` | Exposes corrected stacked Gateway H2 metadata, EN/BOOT control, codecs, blocking UART, and the statically buffered async UART transport/pump. |
+| `sdmmc`      | Enables conversion from BSP SD parts into `embedded_sdmmc::SdCard<SPI, DELAY>`.                                                               |
 
 ## Minimal display example
 
@@ -160,9 +160,15 @@ Charging state comes from AXP2101 register `0x01` bits 5:6. External power uses 
 
 ## Matter / Gateway H2 scope
 
-The BSP does **not** implement Matter, Thread, Zigbee, OpenThread CLI, or the OpenThread state machine. M5Stack's Gateway H2 Thread Border Router documentation builds ESP-IDF's `examples/openthread/ot_rcp` firmware for the ESP32-H2 module. For that firmware, `CoreS3::init_gateway_h2_openthread(...)` owns UART1/GPIO1/GPIO2 and returns an `embedded_io_async 0.7` byte stream plus a pump future. The pump must be spawned independently so UART RX continues draining while the protocol task is idle. `core_s3::gateway_h2::spinel` remains a bounded Spinel HDLC-lite codec; `H2Frame` is a separate custom framing format and is not sent to a stock RCP.
+The BSP does **not** implement Matter, Thread, Zigbee, OpenThread CLI, or the OpenThread state machine. For the officially stacked Module Gateway H2, `CoreS3::init_gateway_h2_openthread(...)` uniquely owns UART1, CoreS3 TX GPIO10 -> H2 RXD, CoreS3 RX GPIO17 <- H2 TXD, active-low EN GPIO7, and H2 GPIO9/BOOT GPIO18. It returns safe EN/BOOT control, an `embedded_io_async 0.7` byte stream, and a pump future. The pump must be spawned independently so UART RX continues draining while the protocol task is idle. Initialization deasserts BOOT before asserting EN; bounded control methods reset normally or request/leave ROM download mode.
 
-Long-lived buffers are caller-owned static resources. The minimum RX capacity holds two worst-case escaped 2048-byte frames; TX holds one. GPIO2 is also camera XCLK, so Gateway H2 UART and camera cannot own their physical resources simultaneously.
+Long-lived buffers are caller-owned static resources. The minimum RX capacity holds two worst-case escaped 2048-byte frames; TX holds one. Diagnostics expose RX bytes/errors/overflows and TX bytes/enqueued/flushed/errors, but UART initialization alone does not prove that Spinel or Thread is operational.
+
+### Gateway H2 DIP routing and conflicts
+
+The Module Gateway H2 v0.4 schematic shows S1 as an 8-position bank. `S1-1`, `S1-2`, and `S1-3` route `WL_ACTIVE`, `BT_ACTIVE`, and `BT_PRIORITY`; `S1-4` is unused; `S1-5` through `S1-8` route H2 SPI CS, MOSI, CLK, and MISO. For the supported UART-only RCP configuration, set `S1-1`, `S1-2`, `S1-3`, `S1-5`, `S1-6`, `S1-7`, and `S1-8` **OFF**. UART, EN, and BOOT are fixed M-Bus routes and do not depend on S1. The BSP records this as expected `GatewayH2OptionalRouting::UartOnly`; it cannot detect switch positions.
+
+H2 SPI is unsupported in v0.5.3 and its DIP routes must remain OFF. GPIO35/36/37 are already shared by LCD/TF-card, and GPIO13 is audio I2S data output. Enabling H2 SPI without adding H2 CS to the same BSP arbiter can expose H2 to LCD/SD traffic or create MISO contention. PTA is not consumed by the UART initializer: GPIO0 `WL_ACTIVE` conflicts with audio I2S MCLK, while GPIO5/GPIO6 are otherwise application GPIOs. `PtaExpected` is metadata only and requires explicit downstream ownership, compatible firmware, coexistence configuration, and switch settings.
 
 Consumer firmware should own:
 
@@ -204,6 +210,22 @@ cargo +esp run -p display_widgets --release --target xtensa-esp32s3-none-elf
 ```
 
 `Embed.toml` is configured for ESP32-S3 JTAG with GDB disabled so `cargo +esp run ...` flashes and starts examples directly.
+
+## v0.5.3 Gateway H2 correction
+
+v0.5.2 incorrectly used PORT.A GPIO1/GPIO2 for the stacked module. Update resource construction to GPIO10/GPIO17 and add GPIO7/GPIO18:
+
+```rust
+CoreS3GatewayH2Resources {
+    uart1: peripherals.UART1,
+    tx: peripherals.GPIO10,
+    rx: peripherals.GPIO17,
+    enable: peripherals.GPIO7,
+    boot: peripherals.GPIO18,
+}
+```
+
+The returned OpenThread parts now include `control`; use `hardware_reset`, `enter_bootloader`, and `leave_bootloader` with an `embedded_hal::delay::DelayNs` provider. GPIO1/GPIO2 remain PORT.A and are not consumed by the stacked Gateway H2 API.
 
 ## v0.5.2 Gateway H2 migration
 

@@ -8,10 +8,10 @@
 //! policy.
 //!
 //! With the `camera` feature on Xtensa ESP-HAL targets,
-//! [`crate::CoreS3::init_camera`] owns the CoreS3 camera pin mapping, configures
+//! `CoreS3::init_camera(...)` owns the CoreS3 camera pin mapping, configures
 //! ESP-HAL `LCD_CAM`, probes the GC0308 sensor over SCCB/I²C, applies the
-//! GC0308 initialization sequence, and returns a [`crate::bsp::CoreS3Camera`].
-//! ESP-HAL 1.1.x camera DMA requires a DMA descriptor-backed buffer, so runtime
+//! GC0308 initialization sequence, and returns a `bsp::CoreS3Camera`.
+//! ESP-HAL 1.2.x camera DMA requires a DMA descriptor-backed buffer, so runtime
 //! capture uses `capture_dma_frame(...)` with `esp_hal::dma::DmaRxBuf` instead
 //! of a bare byte slice.
 //!

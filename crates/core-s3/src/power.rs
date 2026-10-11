@@ -50,13 +50,13 @@ pub struct BatteryStatus {
     pub millivolts: u16,
     /// Battery percentage for existing UI code.
     ///
-    /// This is the AXP2101 gauge value when [`state_of_charge`] is `Some(_)` and
+    /// This is the AXP2101 gauge value when [`Self::state_of_charge`] is `Some(_)` and
     /// a coarse voltage estimate otherwise.
     pub percentage: u8,
     pub charge_state: ChargeState,
     pub external_power: ExternalPower,
     pub low_battery: bool,
-    /// True when [`percentage`] is derived from voltage instead of the AXP2101
+    /// True when [`Self::percentage`] is derived from voltage instead of the AXP2101
     /// gauge register.
     pub percentage_estimated: bool,
     /// Preferred battery state-of-charge from AXP2101 register `0xA4`.

@@ -55,6 +55,13 @@ Consumer applications own:
 - Cooperative LCD/SD sharing must keep LCD CS and TF-card CS from being active simultaneously and restore safe idle after error paths: LCD CS high, TF-card CS high, GPIO35 SD MISO/input default, SPI2 SD/full-duplex-safe mode.
 - Keep GPIO35 aliasing hidden inside the BSP; downstream applications must not manually steal or mode-switch GPIO35.
 
+## CoreS3 Gateway H2 notes
+
+- The official stacked Module Gateway H2 UART is CoreS3 TX GPIO10 -> H2 RXD and CoreS3 RX GPIO17 <- H2 TXD; GPIO7 owns active-low EN and GPIO18 owns H2 GPIO9/BOOT.
+- Do not reintroduce PORT.A GPIO1/GPIO2 as the stacked-module route.
+- UART-only OpenThread operation requires the optional S1 SPI/PTA routes disconnected. H2 SPI is unsupported unless integrated into the existing BSP LCD/SD shared-SPI arbiter.
+- GPIO0 PTA conflicts with audio I2S MCLK; PTA ownership must remain explicit and opt-in.
+
 ## CoreS3 camera notes
 
 - M5Stack's CoreS3 UserDemo is the source for the camera pin map: XCLK GPIO2, SCCB SDA/SCL GPIO12/GPIO11, PCLK GPIO45, VSYNC GPIO46, HREF GPIO38, D0..D7 GPIO39/40/41/42/15/16/48/47, no PWDN/reset GPIO.
