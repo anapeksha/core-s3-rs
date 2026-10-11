@@ -1,83 +1,45 @@
 # core-s3
 
-Rust board support package for the **M5Stack CoreS3 K128** (ESP32-S3) with optional support for an **M5Stack Gateway H2** Thread/Zigbee co-processor.
+A modular, allocator-free `#![no_std]` board support crate for the **M5Stack CoreS3 K128** (ESP32-S3).
 
-The crate is intentionally `#![no_std]` and keeps the reusable BSP layer modular:
+It provides reusable board/peripheral bring-up while leaving networking, protocol runtimes, application UI, persistence, and product policy to downstream firmware.
 
-- board metadata and pin/device maps for CoreS3 peripherals
-- crate-owned ILI9342C-compatible display bring-up
-- lightweight `embedded-graphics` widgets and dirty-region helpers
-- FT6336U touch parsing and rotation-aware coordinate mapping
-- AXP2101 power/battery helpers and AW9523B expander support
-- BMI270/BMM150 motion/orientation helpers
-- BM8563 RTC helpers with small `no_std` date/time types
-- ES7210/AW88298 audio configuration helpers
-- feature-gated CoreS3 GC0308 camera metadata, SCCB setup, ESP-HAL LCD_CAM bring-up, and bounded DMA capture behind `camera`
-- feature-gated Gateway H2 UART/framing/OpenThread transport surfaces and Spinel HDLC-lite codec behind `gateway-h2`
-- optional TF-card SD parts compatible with `embedded-sdmmc`
+## Supported hardware
 
-> Hardware note: v0.5.3 uses `esp-hal = "=1.2.2"` and corrects the stacked Module Gateway H2 mapping to UART1 TX GPIO10, RX GPIO17, EN GPIO7, and GPIO9/BOOT GPIO18. The shared LCD/TF-card SPI API retains the hardware-validated GPIO35 D/C↔MISO handoff, SD-before-LCD acquisition flow, and safe-idle cleanup from v0.5.1. Gateway H2 v0.5.3 is software-validated; real RCP hardware validation remains explicitly pending.
+- ILI9342C-compatible LCD and FT6336U touch
+- AXP2101 PMIC and AW9523B I/O expander
+- BMI270 IMU and BMM150 magnetometer helpers
+- BM8563 RTC
+- ES7210 microphone ADC and AW88298 speaker configuration
+- TF-card access with safe LCD/SD shared-SPI coordination
+- GC0308 camera capture behind `camera`
+- Stacked Module Gateway H2 control and buffered UART transport behind `gateway-h2`
 
-## Peripheral support
-
-| Peripheral            | Address / pins                                                                                             | Support                                                                                                                  |
-| --------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| ILI9342C SPI LCD      | MOSI GPIO37, SCLK GPIO36, CS GPIO3, D/C GPIO35, TF CS GPIO4 held high                                      | init, RGB565 drawing, clipping, rotation/MADCTL, dirty-region blits, shared-SPI initializer                              |
-| FT6336U touch         | I2C `0x38` on SDA GPIO12/SCL GPIO11                                                                        | touch report parsing, down/up/move, gestures, rotation mapping, hit testing                                              |
-| AXP2101 PMIC          | I2C `0x34`                                                                                                 | CoreS3 defaults, backlight rail, M5Unified-compatible battery SOC/status helpers, shutdown/sleep prep                    |
-| AW9523B expander      | I2C `0x58`                                                                                                 | CoreS3 defaults and safe output helpers, LCD reset pin helper                                                            |
-| BMI270 IMU            | I2C `0x69`                                                                                                 | init/config, accel/gyro raw reads, offsets, basic motion detection                                                       |
-| BMM150 magnetometer   | `0x10` on BMI270 auxiliary sensor-hub I2C                                                                  | generic register helper, hard-iron offset, integer heading helper; CoreS3 access path needs BMI270 sensor-hub validation |
-| BM8563 RTC            | I2C `0x51`                                                                                                 | get/set date-time, alarms, timer metadata                                                                                |
-| ES7210 microphone ADC | I2C `0x40`, I2S GPIO0/34/33/13/14                                                                          | configuration helper; I2S DMA remains app/HAL-owned                                                                      |
-| AW88298 speaker amp   | I2C `0x36`, I2S GPIO0/34/33/13/14                                                                          | configuration helper; I2S DMA remains app/HAL-owned                                                                      |
-| Gateway H2            | UART1 TX GPIO10, RX GPIO17, EN GPIO7, GPIO9/BOOT GPIO18                                                    | safe control, buffered async UART, bounded diagnostics, OpenThread 0.4 Spinel compatibility                              |
-| TF-card slot          | SCLK GPIO36, MOSI GPIO37, MISO GPIO35, CS GPIO4                                                            | slot metadata, card-detect helper, shared-SPI `SpiDevice` parts, optional `embedded-sdmmc::SdCard` conversion            |
-| GC0308 camera         | XCLK GPIO2, PCLK GPIO45, VSYNC GPIO46, HREF GPIO38, D0..D7 GPIO39/40/41/42/15/16/48/47, SCCB GPIO12/GPIO11 | feature-gated `camera` API, sensor probe/config, QQVGA RGB565/grayscale metadata, ESP-HAL LCD_CAM DMA capture wrapper    |
-
-## Repository layout
-
-```text
-crates/core-s3/                    no_std BSP crate
-examples/hello_world/             basic LCD validation
-examples/downstream_esp_hal_112/   downstream compatibility build (legacy path name; esp-hal 1.2.2)
-examples/dirty_regions/           dirty-region animation
-examples/dual_core/               PRO CPU + APP CPU example
-examples/gateway_h2/              Gateway H2 UART scaffold
-examples/display_widgets/         widget rendering smoke test
-examples/touch_demo/              FT6336U smoke-test shell
-examples/battery_status/          AXP2101/battery smoke-test shell
-examples/imu/                     BMI270 smoke-test shell
-examples/compass/                 BMM150 smoke-test shell
-examples/rtc/                     BM8563 smoke-test shell
-examples/audio_init/              ES7210/AW88298 smoke-test shell
-examples/sd_card/                 AW9523B TF-card detect demo
-examples/sd_block_probe/          shared-SPI embedded-sdmmc capacity probe
-examples/display_sd_coexist/      alternating LCD + raw SD read/write coexistence test
-examples/camera_capture/          GC0308 live LCD preview and bounded DMA capture demo
-examples/gateway_h2_transport/    H2 framing smoke-test shell
-examples/gateway_h2_openthread/   openthread 0.4.0 UartSpinelTransport integration
-examples/full_board_demo/         board overview smoke-test shell
-.github/workflows/                PR validation and firmware release automation
-```
+See [`docs/hardware.md`](docs/hardware.md) and the [`examples`](examples) directory for pin maps and complete bring-up flows.
 
 ## Features
 
-| Feature      | Description                                                                                                                                   |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `defmt`      | Enables `defmt` formatting for supported dependency-free public types.                                                                        |
-| `camera`     | Enables `core_s3::camera` and ESP-HAL-backed CoreS3 GC0308/LCD_CAM bring-up helpers. Implies `esp-hal`.                                       |
-| `esp-hal`    | Enables ESP-HAL-backed CoreS3 bring-up helpers on Xtensa ESP32-S3 targets.                                                                    |
-| `gateway-h2` | Exposes corrected stacked Gateway H2 metadata, EN/BOOT control, codecs, blocking UART, and the statically buffered async UART transport/pump. |
-| `sdmmc`      | Enables conversion from BSP SD parts into `embedded_sdmmc::SdCard<SPI, DELAY>`.                                                               |
+| Feature      | Description                                                                    |
+| ------------ | ------------------------------------------------------------------------------ |
+| `esp-hal`    | ESP-HAL-backed CoreS3 initialization on Xtensa ESP32-S3 targets                |
+| `camera`     | GC0308 SCCB setup and bounded LCD_CAM DMA capture; implies `esp-hal`           |
+| `gateway-h2` | Stacked Gateway H2 metadata, EN/BOOT control, framing, and buffered async UART |
+| `sdmmc`      | Conversion to `embedded_sdmmc::SdCard`                                         |
+| `defmt`      | Optional formatting implementations                                            |
 
-## Minimal display example
+Default builds remain HAL-independent and `no_std`.
+
+## Usage
+
+```toml
+[dependencies]
+core-s3 = { version = "0.5.4", features = ["esp-hal"] }
+```
 
 ```rust
-use core_s3::{CoreS3, bsp::CoreS3DisplayResources, ui::{Label, Theme}};
-use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
+use core_s3::{CoreS3, bsp::CoreS3DisplayResources};
 
-let mut parts = CoreS3::init_display(CoreS3DisplayResources {
+let mut display = CoreS3::init_display(CoreS3DisplayResources {
     i2c0: peripherals.I2C0,
     i2c_sda: peripherals.GPIO12,
     i2c_scl: peripherals.GPIO11,
@@ -88,189 +50,74 @@ let mut parts = CoreS3::init_display(CoreS3DisplayResources {
     lcd_cs: peripherals.GPIO3,
     tf_card_cs: peripherals.GPIO4,
 })?;
-
-parts.display.clear(Rgb565::BLACK)?;
-Label {
-    text: "LCD ready",
-    top_left: Point::new(24, 48),
-    color: Rgb565::CYAN,
-}
-.draw(&mut parts.display)?;
 ```
 
-## Widgets and dirty-region sprite
+## LCD and TF-card sharing
 
-`core_s3::display::DirtySprite` stores an off-screen framebuffer and tracks only changed rectangles. Drawing through `embedded-graphics` marks dirty regions automatically; `flush_dirty` / `flush_dirty_at` then blit only final pixels for changed regions into the real display target. Dirty rectangles are clipped, touching/intersecting rectangles merge deterministically, and capacity overflow collapses pending regions into one conservative bounding rectangle so a changed pixel can never lose its dirty marker. `invalidate(area)` and `invalidate_all()` support explicit repaint requests. Dirty state clears only after every target write succeeds, so failed flushes remain retryable.
+The LCD and TF-card share SPI2, including GPIO35 as LCD D/C versus SD MISO. The BSP owns this handoff and guarantees safe chip-select and GPIO restoration on success and error paths.
 
-`core_s3::ui` provides small reusable widgets without a GUI framework dependency:
+For reliable use with a pre-inserted card:
 
-- `Label`
-- `Button`
-- `Toggle`
-- `Slider`
-- `ProgressBar`
-- `BatteryIndicator`
-- `StatusBar`
-- `Menu`
+1. Initialize shared SPI and SD parts.
+2. Initialize CoreS3 power and power-cycle the TF-card rail.
+3. Probe SD before any LCD traffic.
+4. Initialize the LCD with `CoreS3::init_display_on_powered_shared_spi(...)`.
 
-## Shared LCD + TF-card SPI
-
-CoreS3 routes the LCD and TF-card socket through the same SPI signal group:
-
-```text
-SPI2
-SCLK GPIO36
-MOSI GPIO37
-MISO GPIO35
-LCD CS GPIO3
-TF CS GPIO4
-```
-
-For firmware that needs both devices, use `CoreS3::init_shared_spi`, store the returned `CoreS3SharedSpiParts` in a `static_cell::StaticCell`, then create the LCD and SD chip-select devices independently with `CoreS3::init_display_on_shared_spi` and `CoreS3::init_sd_on_shared_spi`.
-
-M5Stack's official CoreS3 PinMap lists LCD D/C on GPIO35 and TF-card MISO on the same GPIO35 pad. M5GFX's CoreS3 panel switches GPIO35 on LCD CS boundaries: LCD CS active routes GPIO35 as D/C output, while LCD CS inactive releases GPIO35 back to SPI MISO. The BSP follows that model with CoreS3-specific LCD and SD `SpiDevice` wrappers: LCD transactions force TF-card CS high, route GPIO35 as D/C output only while LCD CS is active, then restore LCD CS high, TF-card CS high, GPIO35 SD MISO/input, and SD-safe SPI settings before returning. SD transactions release GPIO35 as a pulled-up MISO input before TF-card CS is active.
-
-For bounded high-throughput updates on the shared bus, `CoreS3SharedDisplay::with_lcd_transaction(...)` keeps one logical update inside one safe LCD/SD handoff. Its scoped transaction exposes validated `blit_rgb565_be(area, bytes)` writes and transfer statistics. The convenience `CoreS3SharedDisplay::blit_rgb565_be(...)` performs one address window and one logical session. Input must be exactly two bytes per pixel in row-major, big-endian RGB565 order, the area must be fully in bounds, and v0.5.1 requires landscape orientation. Validation occurs before LCD CS is asserted. Existing iterator and `embedded-graphics` APIs remain available. The v0.5.1 path was hardware-validated with the dirty-region animation/color pattern and 250 alternating LCD/SD read/write/readback cycles, including repeated reset, cold boot, and card remove/reinsert/reset.
-
-For robust acquisition when a card is already inserted at flash/cold-boot/reset time, initialize and probe SD before LCD SPI traffic: create shared SPI and SD parts, initialize internal I2C, call `CoreS3::init_core_s3_power(...)`, `CoreS3::power_cycle_tf_card_rail(...)`, `sd_parts.spi_device.prepare_for_card_acquire()`, then call `CoreS3SdParts::into_sdmmc()` and `SdCard::num_bytes()`. After the SD probe, initialize the LCD with `CoreS3::init_display_on_powered_shared_spi(...)`. Use `examples/display_sd_coexist` to validate alternating LCD updates and raw SD read/write/readback on hardware.
-
-Downstream firmware can keep using `embedded_hal::spi::SpiDevice` and, with feature `sdmmc`, `CoreS3SdParts::into_sdmmc()` returns an `embedded_sdmmc::SdCard<SPI, DELAY>` suitable for a real `num_bytes()` capacity probe.
-
-The BSP intentionally does not provide credential/token/secret abstractions, fake filesystems, plaintext storage policy, or encryption; downstream firmware should encrypt sensitive bytes before writing them to SD.
+Use `CoreS3SharedDisplay::with_lcd_transaction(...)` for batched updates and `blit_rgb565_be(...)` for validated zero-copy panel-ready RGB565 data. See `examples/display_sd_coexist`.
 
 ## Camera
 
-Enable feature `camera` for the CoreS3 GC0308 camera API. The BSP owns the CoreS3 camera pin map from M5Stack's UserDemo (`XCLK GPIO2`, SCCB on internal I²C `GPIO12/GPIO11`, `PCLK GPIO45`, `VSYNC GPIO46`, `HREF GPIO38`, and `D0..D7 GPIO39/40/41/42/15/16/48/47`), probes the GC0308 product ID, applies the GC0308 default register table, and configures the advertised output mode.
+Enable `camera` for bounded GC0308 capture:
 
-v0.5.0 intentionally supports only bounded low-memory raw modes until broader frame sizes are hardware-validated:
+- QQVGA RGB565 (`160x120`)
+- QQVGA grayscale/luminance (`160x120`)
+- centered `DigitalZoom::{X1, X2, X4}` sensor crop
 
-- `CameraConfig::qqvga_rgb565()` — `160x120`, RGB565, `QQVGA_RGB565_FRAME_BUFFER_BYTES`
-- `CameraConfig::qr_grayscale()` — `160x120`, luminance bytes, `QR_GRAYSCALE_FRAME_BUFFER_BYTES`
-- `DigitalZoom::{X1,X2,X4}` — centered GC0308 sensor crop; preview code can scale the cropped frame on the LCD
+Capture uses caller-provided ESP-HAL DMA buffers. GPIO2 is camera XCLK and conflicts with Grove Port A pin 2. See `examples/camera_capture` for the live preview and touch zoom demo.
 
-ESP-HAL 1.2.x LCD_CAM capture requires a descriptor-backed DMA buffer, so `CoreS3Camera::capture_dma_frame(...)` accepts and returns `esp_hal::dma::DmaRxBuf` rather than a plain `&mut [u8]`. Use `examples/camera_capture` as the no-std live-preview template; it starts in sensor-crop `DigitalZoom::X2`, scales the cropped frame to the left-side LCD preview area, and exposes large right-side touch buttons for interactive `1x` / `2x` / `4x` zoom changes. Camera use consumes GPIO2, which conflicts with treating Grove Port A pin 2 as an application-owned GPIO/UART/I²C pin while the camera is active.
+## Gateway H2
 
-Hardware validation for the v0.5.0 camera path was run on a real CoreS3 for serial DMA capture, live LCD preview, and interactive touch-controlled sensor-crop zoom.
+The official stacked Module Gateway H2 route is:
 
-## Power / battery status
+```text
+CoreS3 TX GPIO10 -> H2 RXD
+CoreS3 RX GPIO17 <- H2 TXD
+CoreS3 GPIO7     -> H2 EN (active-low reset)
+CoreS3 GPIO18    -> H2 GPIO9/BOOT
+```
 
-`core_s3::power::Axp2101::battery_level_percent()` reads AXP2101 register `0xA4`, matching M5Unified's CoreS3 `getBatteryLevel()` behavior. `Axp2101::status()` prefers that gauge SOC when it returns `0..=100`; if unavailable, the existing `BatteryStatus::percentage` falls back to a coarse voltage estimate and sets `percentage_estimated = true` with `state_of_charge = None`.
+`CoreS3::init_gateway_h2_openthread(...)` returns:
 
-Charging state comes from AXP2101 register `0x01` bits 5:6. External power uses register `0x00` bit `0x20`, and battery presence uses register `0x00` bit `0x08`. CoreS3/AXP2101 does not expose battery current through this BSP path, so current-based coulomb counting is not available from AXP2101 alone.
+- a statically buffered `embedded_io_async 0.7::Read + Write` transport;
+- an independently spawned UART pump that continuously drains RX;
+- safe reset and ROM-bootloader control.
 
-## Matter / Gateway H2 scope
+The BSP does not depend on OpenThread. `examples/gateway_h2_openthread` verifies integration with `openthread 0.4.0`'s `UartSpinelTransport`.
 
-The BSP does **not** implement Matter, Thread, Zigbee, OpenThread CLI, or the OpenThread state machine. For the officially stacked Module Gateway H2, `CoreS3::init_gateway_h2_openthread(...)` uniquely owns UART1, CoreS3 TX GPIO10 -> H2 RXD, CoreS3 RX GPIO17 <- H2 TXD, active-low EN GPIO7, and H2 GPIO9/BOOT GPIO18. It returns safe EN/BOOT control, an `embedded_io_async 0.7` byte stream, and a pump future. The pump must be spawned independently so UART RX continues draining while the protocol task is idle. Initialization deasserts BOOT before asserting EN; bounded control methods reset normally or request/leave ROM download mode.
+### Gateway H2 DIP switches
 
-Long-lived buffers are caller-owned static resources. The minimum RX capacity holds two worst-case escaped 2048-byte frames; TX holds one. Diagnostics expose RX bytes/errors/overflows and TX bytes/enqueued/flushed/errors, but UART initialization alone does not prove that Spinel or Thread is operational.
+For UART-only RCP operation on Module Gateway H2 v0.4, set routed positions **S1-1, S1-2, S1-3, S1-5, S1-6, S1-7, and S1-8 OFF**. S1-4 is unused. UART, EN, and BOOT are fixed M-Bus routes.
 
-### Gateway H2 DIP routing and conflicts
-
-The Module Gateway H2 v0.4 schematic shows S1 as an 8-position bank. `S1-1`, `S1-2`, and `S1-3` route `WL_ACTIVE`, `BT_ACTIVE`, and `BT_PRIORITY`; `S1-4` is unused; `S1-5` through `S1-8` route H2 SPI CS, MOSI, CLK, and MISO. For the supported UART-only RCP configuration, set `S1-1`, `S1-2`, `S1-3`, `S1-5`, `S1-6`, `S1-7`, and `S1-8` **OFF**. UART, EN, and BOOT are fixed M-Bus routes and do not depend on S1. The BSP records this as expected `GatewayH2OptionalRouting::UartOnly`; it cannot detect switch positions.
-
-H2 SPI is unsupported in v0.5.3 and its DIP routes must remain OFF. GPIO35/36/37 are already shared by LCD/TF-card, and GPIO13 is audio I2S data output. Enabling H2 SPI without adding H2 CS to the same BSP arbiter can expose H2 to LCD/SD traffic or create MISO contention. PTA is not consumed by the UART initializer: GPIO0 `WL_ACTIVE` conflicts with audio I2S MCLK, while GPIO5/GPIO6 are otherwise application GPIOs. `PtaExpected` is metadata only and requires explicit downstream ownership, compatible firmware, coexistence configuration, and switch settings.
-
-Consumer firmware should own:
-
-- Wi-Fi/IP networking
-- Matter server/runtime such as `rs-matter`
-- endpoints and clusters
-- commissioning and persistence
-- Thread/OpenThread/Spinel/Zigbee protocol integration
-- Home Assistant behavior
+H2 SPI is unsupported because its optional routes conflict with the BSP-owned LCD/TF-card bus on GPIO35/36/37 and audio output on GPIO13. PTA is opt-in metadata only; GPIO0 `WL_ACTIVE` conflicts with audio I2S MCLK. Software cannot detect physical DIP positions.
 
 ## Building
 
-The default ESP32-S3 build is kept compatible with:
-
-```toml
-esp-hal = "=1.2.2"
-esp-println = "=0.15.0"
-esp-backtrace = "=0.17.0"
-esp-rom-sys = "=0.1.4"
-esp-alloc = "=0.10.0"
-esp-radio = "=1.0.0-beta.0"
-esp-radio-rtos-driver = "=0.3.0"
-esp-storage = "=0.7.0"
-embedded-hal = "1.0"
-```
-
-Install the ESP Rust toolchain with [`espup`](https://github.com/esp-rs/espup), then:
+The ESP path currently targets `esp-hal = "=1.2.2"`. Install the ESP Rust toolchain with [`espup`](https://github.com/esp-rs/espup), then run:
 
 ```sh
+cargo +stable test -p core-s3 --all-features
 cargo +esp check --workspace --all-features --release --target xtensa-esp32s3-none-elf
-cargo +esp build -p display_widgets --release --target xtensa-esp32s3-none-elf
-cargo +esp build -p full_board_demo --release --target xtensa-esp32s3-none-elf
+cargo +esp run -p hello_world --release --target xtensa-esp32s3-none-elf
 ```
 
-Flash an example with `cargo-embed` through the workspace runner:
+## Scope
 
-```sh
-cargo +esp run -p display_widgets --release --target xtensa-esp32s3-none-elf
-```
+Consumer applications own Wi-Fi/IP, Matter/OpenThread/Zigbee runtimes, datasets, commissioning, credentials, persistence, high-throughput audio policy, and camera image processing. The BSP does not allocate, persist frames, or start hidden background tasks.
 
-`Embed.toml` is configured for ESP32-S3 JTAG with GDB disabled so `cargo +esp run ...` flashes and starts examples directly.
+## Hardware status
 
-## v0.5.3 Gateway H2 correction
+Shared LCD/TF-card coexistence and the GC0308 camera preview have been validated on real CoreS3 hardware. The corrected Gateway H2 GPIO10/GPIO17/GPIO7/GPIO18 path has been smoke-tested for CoreS3 boot, reset, and buffered UART initialization on CoreS3 rev1 + Gateway H2 v0.4; a real Spinel exchange remains unvalidated.
 
-v0.5.2 incorrectly used PORT.A GPIO1/GPIO2 for the stacked module. Update resource construction to GPIO10/GPIO17 and add GPIO7/GPIO18:
+## License
 
-```rust
-CoreS3GatewayH2Resources {
-    uart1: peripherals.UART1,
-    tx: peripherals.GPIO10,
-    rx: peripherals.GPIO17,
-    enable: peripherals.GPIO7,
-    boot: peripherals.GPIO18,
-}
-```
-
-The returned OpenThread parts now include `control`; use `hardware_reset`, `enter_bootloader`, and `leave_bootloader` with an `embedded_hal::delay::DelayNs` provider. GPIO1/GPIO2 remain PORT.A and are not consumed by the stacked Gateway H2 API.
-
-## v0.5.2 Gateway H2 migration
-
-`init_gateway_h2_openthread` now requires static pipe resources and returns both `transport` and `pump`. Spawn `pump.run()` in an independent task before handing `transport` to `openthread::spinel::UartSpinelTransport`. `examples/gateway_h2_openthread` compile-checks this exact integration against `openthread = "=0.4.0"`; Xtensa builds must enable OpenThread's `rcp` and `use-gcc` features. The transport directly implements `embedded_io_async 0.7::Read + Write`; the BSP still has no OpenThread dependency. The lower-level blocking `init_gateway_h2` API remains available for diagnostics and custom protocols.
-
-```rust
-static H2_BUFFERS: StaticCell<CoreS3GatewayH2BufferedUartResources<
-    GATEWAY_H2_MIN_RX_BUFFER_SIZE,
-    GATEWAY_H2_MIN_TX_BUFFER_SIZE,
->> = StaticCell::new();
-
-let parts = CoreS3::init_gateway_h2_openthread(
-    resources,
-    H2_BUFFERS.init(CoreS3GatewayH2BufferedUartResources::new()),
-    GatewayH2OpenThreadConfig::default(),
-)?;
-// Spawn parts.pump.run() independently; move parts.transport to the protocol task.
-```
-
-## v0.5 migration notes
-
-- Update dependencies from `core-s3 = "0.4"` to `core-s3 = "0.5"`.
-- Enable feature `camera` to use the CoreS3 GC0308 camera module and `CoreS3::init_camera(...)`.
-- Camera v0.5.0 consumes the internal I²C bus for GC0308 SCCB during initialization/configuration and returns it through `CoreS3Camera::release_i2c()` when the application is done with camera ownership.
-- `CameraConfig::qqvga_rgb565()` and `CameraConfig::qr_grayscale()` are the supported bounded capture modes in v0.5.0; `DigitalZoom::{X1,X2,X4}` provides centered sensor-crop zoom. Larger base sizes/JPEG/custom windows are rejected until hardware-validated.
-
-## v0.4 migration notes
-
-- Update dependencies from `core-s3 = "0.3"` to `core-s3 = "0.4"`.
-- Prefer `core-s3 = "0.4.4"` or newer for shared LCD + TF-card SPI: v0.4.4 keeps the v0.4.2 pre-inserted-card acquisition fixes and adds cooperative LCD/SD sharing so LCD transactions restore the SD/MISO-safe GPIO35/SPI2 idle state.
-- ESP-HAL users of v0.5.2 should use the supported `esp-hal = "=1.2.2"` family.
-- Existing `CoreS3::init_display` remains available for display-only firmware.
-- Firmware that needs both LCD and TF-card access should migrate to `CoreS3::init_shared_spi`, `CoreS3::init_sd_on_shared_spi`, `CoreS3::init_internal_i2c`, `CoreS3::power_cycle_tf_card_rail`, `CoreS3SharedSdDevice::prepare_for_card_acquire`, and `CoreS3::init_display_on_powered_shared_spi` when SD must be acquired before LCD traffic. The older `CoreS3::init_display_on_shared_spi` remains available for display-first code.
-- Use feature `sdmmc` if you want BSP SD parts to convert directly into `embedded_sdmmc::SdCard`.
-- Gateway H2 Matter/Thread config types remain configuration-only. Use `gateway_h2::transport` for H2 framing and OpenThread transport traits, and use `gateway_h2::spinel` for the Spinel HDLC-lite codec when the H2 is flashed with ESP-IDF OpenThread RCP firmware.
-- Full Matter server/runtime code still belongs in consumer applications, not this BSP.
-
-## v0.3 migration notes
-
-- Update dependencies from `core-s3 = "0.2"` to `core-s3 = "0.3"`.
-- `BatteryStatus` now includes percentage estimate, charge state, external-power state, and low-battery state. Code using the old `{ millivolts, state }` fields should migrate to `charge_state` and the richer status fields.
-
-## Unsupported / application-owned functionality
-
-- Camera support is feature-gated and currently limited to the CoreS3 GC0308 QQVGA raw modes documented above.
-- High-throughput I2S DMA capture/playback is application/HAL-owned.
-- Matter, Thread, Zigbee, OpenThread, and Spinel protocol stacks are application-owned.
-- Voltage-based battery percentage is approximate and should not be used as a precise fuel gauge.
+Licensed under the repository's license terms.

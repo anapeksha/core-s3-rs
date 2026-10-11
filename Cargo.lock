@@ -313,7 +313,7 @@ dependencies = [
 
 [[package]]
 name = "core-s3"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "critical-section",
  "defmt",
