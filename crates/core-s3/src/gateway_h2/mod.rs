@@ -2,19 +2,18 @@ pub mod matter;
 pub mod spinel;
 pub mod transport;
 
-use crate::pins::{Gpio, GrovePortPins};
+use crate::pins::Gpio;
 
-/// Feature-gated support metadata for an M5Stack Gateway H2 stack.
+/// Feature-gated metadata for the officially stacked M5Stack Module Gateway H2.
 ///
-/// Enable with `--features gateway-h2`. Gateway H2 is an ESP32-H2
-/// IEEE 802.15.4 co-processor/device. Depending on the firmware flashed to the
-/// H2 it may expose an OpenThread CLI, an OpenThread RCP/Spinel transport, or a
-/// standalone application; it is not assumed to be an AT-command modem.
+/// UART, EN, and BOOT are fixed M-Bus routes. SPI and PTA are optional physical
+/// DIP-switch routes and are not detected by software.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GatewayH2 {
     pub host_uart: UartPins,
-    pub reset: Option<Gpio>,
-    pub boot: Option<Gpio>,
+    pub enable: Gpio,
+    pub boot: Gpio,
+    pub optional: GatewayH2OptionalPins,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -23,18 +22,50 @@ pub struct UartPins {
     pub rx: Gpio,
 }
 
+/// Optional DIP-routed Gateway H2 signals and their CoreS3 conflicts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GatewayH2OptionalPins {
+    pub spi_mosi: Gpio,
+    pub spi_miso: Gpio,
+    pub spi_clock: Gpio,
+    pub spi_cs: Gpio,
+    pub wl_active: Gpio,
+    pub bt_priority: Gpio,
+    pub bt_active: Gpio,
+}
+
 impl GatewayH2 {
-    /// Default Grove-port UART wiring. Validate against your exact base/stack
-    /// revision before enabling bootloader-reset automation.
-    ///
-    /// RX uses GPIO2, which is also CoreS3 camera XCLK. The camera and Gateway
-    /// H2 UART cannot own that physical pin at the same time.
-    pub const GROVE_UART: Self = Self {
+    /// Official CoreS3 + stacked Module Gateway H2 v0.4 mapping.
+    pub const STACKED: Self = Self {
         host_uart: UartPins {
-            tx: GrovePortPins::PORT_A.pin1,
-            rx: GrovePortPins::PORT_A.pin2,
+            tx: Gpio(10),
+            rx: Gpio(17),
         },
-        reset: None,
-        boot: None,
+        enable: Gpio(7),
+        boot: Gpio(18),
+        optional: GatewayH2OptionalPins {
+            spi_mosi: Gpio(37),
+            spi_miso: Gpio(35),
+            spi_clock: Gpio(36),
+            spi_cs: Gpio(13),
+            wl_active: Gpio(0),
+            bt_priority: Gpio(5),
+            bt_active: Gpio(6),
+        },
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stacked_mapping_matches_official_thread_br_pinmap() {
+        assert_eq!(GatewayH2::STACKED.host_uart.tx, Gpio(10));
+        assert_eq!(GatewayH2::STACKED.host_uart.rx, Gpio(17));
+        assert_eq!(GatewayH2::STACKED.enable, Gpio(7));
+        assert_eq!(GatewayH2::STACKED.boot, Gpio(18));
+        assert_eq!(GatewayH2::STACKED.optional.spi_miso, Gpio(35));
+        assert_eq!(GatewayH2::STACKED.optional.wl_active, Gpio(0));
+    }
 }

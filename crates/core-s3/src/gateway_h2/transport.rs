@@ -31,6 +31,13 @@ pub const GATEWAY_H2_MIN_RX_BUFFER_SIZE: usize = GATEWAY_H2_MAX_ENCODED_SPINEL_F
 pub const GATEWAY_H2_MIN_TX_BUFFER_SIZE: usize = GATEWAY_H2_MAX_ENCODED_SPINEL_FRAME_SIZE;
 
 /// Validate statically allocated OpenThread UART pipe capacities.
+/// Return whether a wrapping 32-bit completion counter reached a target.
+///
+/// Valid when fewer than `2^31` operations can be outstanding.
+pub const fn tx_sequence_reached(current: u32, target: u32) -> bool {
+    current.wrapping_sub(target) < (1_u32 << 31)
+}
+
 pub const fn validate_openthread_buffer_capacities(
     rx: usize,
     tx: usize,
@@ -175,6 +182,71 @@ pub enum GatewayH2FirmwareMode {
     Unknown,
 }
 
+/// Expected optional Gateway H2 routing selected by the caller.
+///
+/// This records software configuration only; the module's DIP positions cannot
+/// be detected electrically by the CoreS3. H2 SPI is intentionally not modeled
+/// as enabled because it is not coordinated by the LCD/TF-card SPI arbiter.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum GatewayH2OptionalRouting {
+    /// Safe OpenThread RCP default: H2 SPI and PTA DIP routes are disconnected.
+    #[default]
+    UartOnly,
+    /// Caller expects all three PTA routes and owns/configures them separately.
+    PtaExpected,
+}
+
+/// Last operating mode requested through the Gateway H2 control API.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum GatewayH2ControlMode {
+    /// BOOT/GPIO9 deasserted and EN asserted for normal firmware execution.
+    #[default]
+    Normal,
+    /// BOOT/GPIO9 asserted while EN rises to request ROM serial download mode.
+    Bootloader,
+}
+
+/// Pure control-line operation used to test the bounded EN/BOOT sequences.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GatewayH2ControlStep {
+    EnableLow,
+    EnableHigh,
+    BootLow,
+    BootHigh,
+    DelayMs(u32),
+}
+
+/// EN/BOOT sequence for a normal hardware reset.
+pub const GATEWAY_H2_RESET_SEQUENCE: [GatewayH2ControlStep; 5] = [
+    GatewayH2ControlStep::BootHigh,
+    GatewayH2ControlStep::EnableLow,
+    GatewayH2ControlStep::DelayMs(10),
+    GatewayH2ControlStep::EnableHigh,
+    GatewayH2ControlStep::DelayMs(50),
+];
+/// EN/BOOT sequence that requests ESP32-H2 ROM serial download mode.
+pub const GATEWAY_H2_ENTER_BOOTLOADER_SEQUENCE: [GatewayH2ControlStep; 7] = [
+    GatewayH2ControlStep::EnableLow,
+    GatewayH2ControlStep::DelayMs(10),
+    GatewayH2ControlStep::BootLow,
+    GatewayH2ControlStep::DelayMs(1),
+    GatewayH2ControlStep::EnableHigh,
+    GatewayH2ControlStep::DelayMs(50),
+    GatewayH2ControlStep::BootLow,
+];
+/// EN/BOOT sequence that returns to normal RCP execution.
+pub const GATEWAY_H2_LEAVE_BOOTLOADER_SEQUENCE: [GatewayH2ControlStep; 7] = [
+    GatewayH2ControlStep::EnableLow,
+    GatewayH2ControlStep::DelayMs(10),
+    GatewayH2ControlStep::BootHigh,
+    GatewayH2ControlStep::DelayMs(1),
+    GatewayH2ControlStep::EnableHigh,
+    GatewayH2ControlStep::DelayMs(50),
+    GatewayH2ControlStep::BootHigh,
+];
+
 /// Static Gateway H2 OpenThread transport metadata.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -189,6 +261,8 @@ pub struct GatewayH2OpenThreadConfig {
     pub hdlc_lite: bool,
     /// Whether CRC/FCS is provided by the host framing layer.
     pub has_crc: bool,
+    /// Expected optional physical routing. This is not a DIP-position detector.
+    pub optional_routing: GatewayH2OptionalRouting,
 }
 
 impl Default for GatewayH2OpenThreadConfig {
@@ -198,6 +272,17 @@ impl Default for GatewayH2OpenThreadConfig {
 }
 
 impl GatewayH2OpenThreadConfig {
+    /// Return whether this configuration is valid for the BSP UART RCP path.
+    pub const fn is_valid(self) -> bool {
+        self.baud != 0
+            && self.max_frame_size != 0
+            && self.max_frame_size <= GATEWAY_H2_MAX_SPINEL_FRAME_SIZE
+            && matches!(self.firmware_mode, GatewayH2FirmwareMode::OpenThreadRcp)
+            && self.hdlc_lite
+            && self.has_crc
+            && matches!(self.optional_routing, GatewayH2OptionalRouting::UartOnly)
+    }
+
     /// Conservative defaults for an ESP32-H2 running OpenThread RCP firmware.
     pub const OPENTHREAD_RCP: Self = Self {
         baud: DEFAULT_GATEWAY_H2_BAUD,
@@ -205,6 +290,7 @@ impl GatewayH2OpenThreadConfig {
         firmware_mode: GatewayH2FirmwareMode::OpenThreadRcp,
         hdlc_lite: true,
         has_crc: true,
+        optional_routing: GatewayH2OptionalRouting::UartOnly,
     };
 }
 
@@ -310,6 +396,14 @@ mod tests {
     }
 
     #[test]
+    fn flush_sequence_comparison_is_wrap_safe() {
+        assert!(tx_sequence_reached(10, 10));
+        assert!(tx_sequence_reached(11, 10));
+        assert!(!tx_sequence_reached(9, 10));
+        assert!(tx_sequence_reached(1, u32::MAX));
+    }
+
+    #[test]
     fn validates_buffer_capacities() {
         assert_eq!(
             validate_openthread_buffer_capacities(
@@ -335,6 +429,36 @@ mod tests {
         assert_eq!(
             GatewayH2OpenThreadConfig::default(),
             GatewayH2OpenThreadConfig::OPENTHREAD_RCP
+        );
+    }
+
+    #[test]
+    fn control_sequences_set_straps_before_enable_rises() {
+        assert_eq!(
+            GATEWAY_H2_ENTER_BOOTLOADER_SEQUENCE,
+            [
+                GatewayH2ControlStep::EnableLow,
+                GatewayH2ControlStep::DelayMs(10),
+                GatewayH2ControlStep::BootLow,
+                GatewayH2ControlStep::DelayMs(1),
+                GatewayH2ControlStep::EnableHigh,
+                GatewayH2ControlStep::DelayMs(50),
+                GatewayH2ControlStep::BootLow,
+            ]
+        );
+        assert_eq!(
+            GATEWAY_H2_LEAVE_BOOTLOADER_SEQUENCE[2],
+            GatewayH2ControlStep::BootHigh
+        );
+        let config = GatewayH2OpenThreadConfig::default();
+        assert_eq!(config.optional_routing, GatewayH2OptionalRouting::UartOnly);
+        assert!(config.is_valid());
+        assert!(
+            !GatewayH2OpenThreadConfig {
+                optional_routing: GatewayH2OptionalRouting::PtaExpected,
+                ..config
+            }
+            .is_valid()
         );
     }
 

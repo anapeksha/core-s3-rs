@@ -52,8 +52,10 @@ fn main() -> ! {
     let h2 = CoreS3::init_gateway_h2_openthread(
         CoreS3GatewayH2Resources {
             uart1: peripherals.UART1,
-            tx: peripherals.GPIO1,
-            rx: peripherals.GPIO2,
+            tx: peripherals.GPIO10,
+            rx: peripherals.GPIO17,
+            enable: peripherals.GPIO7,
+            boot: peripherals.GPIO18,
         },
         h2_buffers,
         GatewayH2OpenThreadConfig::default(),
@@ -105,9 +107,9 @@ fn main() -> ! {
         display,
         80,
         if h2.is_ok() {
-            "UART1 TX1 RX2 @ 115200: OK"
+            "UART1 TX10 RX17 @ 115200: OK"
         } else {
-            "UART1 TX1 RX2 @ 115200: FAILED"
+            "UART1 TX10 RX17 @ 115200: FAILED"
         },
         if h2.is_ok() {
             Rgb565::GREEN

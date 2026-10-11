@@ -59,8 +59,10 @@ fn main() -> ! {
     let parts = CoreS3::init_gateway_h2_openthread(
         CoreS3GatewayH2Resources {
             uart1: peripherals.UART1,
-            tx: peripherals.GPIO1,
-            rx: peripherals.GPIO2,
+            tx: peripherals.GPIO10,
+            rx: peripherals.GPIO17,
+            enable: peripherals.GPIO7,
+            boot: peripherals.GPIO18,
         },
         BSP_UART_BUFFERS.init(CoreS3GatewayH2BufferedUartResources::new()),
         GatewayH2OpenThreadConfig::default(),

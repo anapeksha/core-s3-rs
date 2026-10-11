@@ -27,7 +27,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
 #[esp_hal::main]
 fn main() -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default());
-    let gateway = GatewayH2::GROVE_UART;
+    let gateway = GatewayH2::STACKED;
 
     let matter = MatterServerConfig::new(0xFFF1, 0x8001, 3840, 20_202_021, "CoreS3 Gateway H2");
     let thread = ThreadDatasetConfig::new(
@@ -61,8 +61,10 @@ fn main() -> ! {
 
     let mut gateway_parts = CoreS3::init_gateway_h2(CoreS3GatewayH2Resources {
         uart1: peripherals.UART1,
-        tx: peripherals.GPIO1,
-        rx: peripherals.GPIO2,
+        tx: peripherals.GPIO10,
+        rx: peripherals.GPIO17,
+        enable: peripherals.GPIO7,
+        boot: peripherals.GPIO18,
     })
     .expect("initialize Gateway H2 UART");
 
