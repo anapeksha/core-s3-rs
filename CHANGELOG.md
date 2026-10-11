@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-10-11
+
+- Changed the tag-triggered release workflow to publish only the `core-s3` crate through crates.io trusted publishing.
+- Removed release firmware builds, workflow artifacts, and automatic firmware-bearing GitHub releases; hardware examples remain source-only validation tools.
+- Recorded a short CoreS3 rev1 + Gateway H2 v0.4 hardware smoke test of the corrected UART/EN/BOOT initialization path. Spinel exchange remains unvalidated.
+
 ## [0.5.3] - 2026-10-11
 
 - Corrected the officially stacked Module Gateway H2 UART from erroneous PORT.A GPIO1/GPIO2 to CoreS3 TX GPIO10 and RX GPIO17.
