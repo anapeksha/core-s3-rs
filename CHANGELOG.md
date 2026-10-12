@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-10-12
+
+- Corrected the hardware-validated Module Gateway H2 v0.4 UART route to CoreS3 TX GPIO17 and RX GPIO10, retaining GPIO7 EN/reset and GPIO18 GPIO9/BOOT ownership.
+- Changed the OpenThread RCP default to 460800 baud for the ESP-IDF v5.5.2 `examples/openthread/ot_rcp` image and documented the all-eight-switches-OFF UART configuration.
+- Recorded successful S3-hosted H2 flashing/verification, UART exchange, Spinel startup, and RCP capability discovery without claiming Thread dataset attachment or Matter-over-Thread validation.
+- Kept Gateway H2 SPI explicitly unsupported pending authoritative routing/DIP documentation, a concrete SPI-capable H2 firmware/protocol, shared-SPI arbitration, and real hardware validation.
+
 ## [0.5.4] - 2026-10-11
 
 - Changed the tag-triggered release workflow to publish only the `core-s3` crate through crates.io trusted publishing.

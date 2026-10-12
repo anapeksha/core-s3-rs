@@ -18,8 +18,9 @@ pub const MAX_PAYLOAD: usize = 128;
 pub const DEFAULT_GATEWAY_H2_BAUD: u32 = 115_200;
 /// Conservative maximum Spinel frame payload size for application-owned buffers.
 pub const DEFAULT_SPINEL_MAX_FRAME_SIZE: usize = 2048;
-/// Stock Gateway H2 OpenThread RCP UART baud used by the CoreS3 host link.
-pub const GATEWAY_H2_OPENTHREAD_BAUD: u32 = DEFAULT_GATEWAY_H2_BAUD;
+/// Gateway H2 OpenThread RCP UART baud validated with ESP-IDF v5.5.2
+/// `examples/openthread/ot_rcp`.
+pub const GATEWAY_H2_OPENTHREAD_BAUD: u32 = 460_800;
 /// Maximum decoded Spinel frame accepted by the transport contract.
 pub const GATEWAY_H2_MAX_SPINEL_FRAME_SIZE: usize = DEFAULT_SPINEL_MAX_FRAME_SIZE;
 /// Worst-case HDLC-lite bytes for one maximum frame, including FCS and flags.
@@ -283,9 +284,12 @@ impl GatewayH2OpenThreadConfig {
             && matches!(self.optional_routing, GatewayH2OptionalRouting::UartOnly)
     }
 
-    /// Conservative defaults for an ESP32-H2 running OpenThread RCP firmware.
+    /// Defaults for the ESP-IDF v5.5.2 `examples/openthread/ot_rcp` UART image.
+    ///
+    /// Module Gateway H2 v0.4 requires all eight S1 switches OFF in this mode;
+    /// S1-4 is unused.
     pub const OPENTHREAD_RCP: Self = Self {
-        baud: DEFAULT_GATEWAY_H2_BAUD,
+        baud: GATEWAY_H2_OPENTHREAD_BAUD,
         max_frame_size: DEFAULT_SPINEL_MAX_FRAME_SIZE,
         firmware_mode: GatewayH2FirmwareMode::OpenThreadRcp,
         hdlc_lite: true,
@@ -430,6 +434,11 @@ mod tests {
             GatewayH2OpenThreadConfig::default(),
             GatewayH2OpenThreadConfig::OPENTHREAD_RCP
         );
+        assert_eq!(
+            GatewayH2OpenThreadConfig::default().baud,
+            GATEWAY_H2_OPENTHREAD_BAUD
+        );
+        assert_eq!(GATEWAY_H2_OPENTHREAD_BAUD, 460_800);
     }
 
     #[test]

@@ -35,11 +35,11 @@ pub struct GatewayH2OptionalPins {
 }
 
 impl GatewayH2 {
-    /// Official CoreS3 + stacked Module Gateway H2 v0.4 mapping.
+    /// Hardware-validated CoreS3 + stacked Module Gateway H2 v0.4 mapping.
     pub const STACKED: Self = Self {
         host_uart: UartPins {
-            tx: Gpio(10),
-            rx: Gpio(17),
+            tx: Gpio(17),
+            rx: Gpio(10),
         },
         enable: Gpio(7),
         boot: Gpio(18),
@@ -60,9 +60,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stacked_mapping_matches_official_thread_br_pinmap() {
-        assert_eq!(GatewayH2::STACKED.host_uart.tx, Gpio(10));
-        assert_eq!(GatewayH2::STACKED.host_uart.rx, Gpio(17));
+    fn stacked_mapping_matches_hardware_validated_route() {
+        assert_eq!(GatewayH2::STACKED.host_uart.tx, Gpio(17));
+        assert_eq!(GatewayH2::STACKED.host_uart.rx, Gpio(10));
         assert_eq!(GatewayH2::STACKED.enable, Gpio(7));
         assert_eq!(GatewayH2::STACKED.boot, Gpio(18));
         assert_eq!(GatewayH2::STACKED.optional.spi_miso, Gpio(35));

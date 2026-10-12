@@ -57,7 +57,7 @@ Consumer applications own:
 
 ## CoreS3 Gateway H2 notes
 
-- The official stacked Module Gateway H2 UART is CoreS3 TX GPIO10 -> H2 RXD and CoreS3 RX GPIO17 <- H2 TXD; GPIO7 owns active-low EN and GPIO18 owns H2 GPIO9/BOOT.
+- The hardware-validated stacked Module Gateway H2 v0.4 UART is CoreS3 TX GPIO17 -> H2 RXD and CoreS3 RX GPIO10 <- H2 TXD; GPIO7 owns active-low EN and GPIO18 owns H2 GPIO9/BOOT.
 - Do not reintroduce PORT.A GPIO1/GPIO2 as the stacked-module route.
 - UART-only OpenThread operation requires the optional S1 SPI/PTA routes disconnected. H2 SPI is unsupported unless integrated into the existing BSP LCD/SD shared-SPI arbiter.
 - GPIO0 PTA conflicts with audio I2S MCLK; PTA ownership must remain explicit and opt-in.
