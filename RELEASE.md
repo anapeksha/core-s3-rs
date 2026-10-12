@@ -1,170 +1,103 @@
-# core-s3 v0.5.2
+# core-s3 v0.5.5
 
-`core-s3` v0.5.2 upgrades the ESP32-S3 BSP baseline to `esp-hal = "=1.2.2"` and adds a reusable, statically allocated buffered async UART stream for a CoreS3 host communicating with the M5Stack Gateway H2 running stock OpenThread RCP firmware.
+`core-s3 v0.5.5` corrects the stacked Module Gateway H2 v0.4 UART route and OpenThread RCP defaults, and upgrades the no-heap OpenThread example to perform a real bounded Spinel startup and capability-discovery handshake.
 
-## Why this release exists
+## Gateway H2 UART correction
 
-In v0.5.1, `CoreS3::init_gateway_h2_openthread()` returned `esp_hal::uart::Uart<'static, Blocking>`. That type does not implement the `embedded_io_async 0.7` traits required by `openthread 0.4.0`'s `UartSpinelTransport`.
-
-Changing only the mode marker to `Async` was not reliable: an unbuffered UART is drained only while a read future is actively polled. A downstream trial reached OpenThread radio initialization but failed with `RxFailed`. Stock RCP firmware can emit unsolicited Spinel property traffic, so the board transport needs an independently scheduled RX drain and bounded storage between protocol reads.
-
-## New transport architecture
-
-The v0.5.2 OpenThread helper returns two ownership-separated objects:
-
-- `CoreS3GatewayH2AsyncUart`: the async byte stream moved into the OpenThread/protocol task;
-- `CoreS3GatewayH2UartPump`: the exclusive HAL UART owner, spawned and continuously polled in an independent task.
-
-The pump splits the HAL UART and services RX and TX concurrently. UART RX is copied into a static bounded pipe as bytes arrive. Application TX enters another static pipe; the pump handles partial HAL writes and physically flushes each dequeued batch.
-
-This design:
-
-- keeps UART1/GPIO1/GPIO2 ownership inside the BSP;
-- does not alias UART registers or pins;
-- does not require heap allocation;
-- does not place long-lived buffers on a task stack;
-- does not force an Embassy executor on all users;
-- exposes a future that can be spawned by the consumer's chosen executor/RTOS integration;
-- adds no `openthread`, Matter, Wi-Fi, dataset, commissioning, or storage dependency.
-
-## Public API
-
-Key types/constants:
-
-```rust
-CoreS3GatewayH2BufferedUartResources<RX, TX>
-CoreS3GatewayH2AsyncUart<'a, RX, TX>
-CoreS3GatewayH2UartPump<'a, RX, TX>
-CoreS3GatewayH2OpenThreadParts<T, P>
-GatewayH2UartError
-GatewayH2UartStatus
-GATEWAY_H2_OPENTHREAD_BAUD
-GATEWAY_H2_MAX_SPINEL_FRAME_SIZE
-GATEWAY_H2_MAX_ENCODED_SPINEL_FRAME_SIZE
-GATEWAY_H2_MIN_RX_BUFFER_SIZE
-GATEWAY_H2_MIN_TX_BUFFER_SIZE
-```
-
-The byte stream implements:
-
-```rust
-embedded_io_async::Read
-embedded_io_async::Write
-```
-
-using `embedded-io-async 0.7`, so it can be passed to a compatible Spinel UART consumer without a downstream trait-version adapter.
-
-## Static buffer sizing
-
-The decoded frame bound is 2048 bytes. The encoded bound accounts conservatively for FCS, HDLC escaping of every byte, and frame flags.
-
-- Minimum RX: two maximum encoded frames (`8204` bytes).
-- Minimum TX: one maximum encoded frame (`4102` bytes).
-
-Larger capacities are allowed. Initialization rejects smaller capacities. Bounded storage still requires the pump and protocol consumer to be scheduled appropriately; if the consumer stops draining longer than the configured capacity permits, the hardware can overflow. FIFO overflow is counted, latched, and surfaced as a typed error instead of being silently ignored.
-
-## UART settings and ownership
-
-Default stock-RCP transport settings:
+The hardware-validated stacked route is:
 
 ```text
-UART1
-CoreS3 TX GPIO1 -> Gateway H2 RX
-CoreS3 RX GPIO2 <- Gateway H2 TX
-115200 baud
-8 data bits, no parity, 1 stop bit
-No RTS/CTS hardware flow control
+CoreS3 TX GPIO17 -> H2 RXD
+CoreS3 RX GPIO10 <- H2 TXD
+CoreS3 GPIO7     -> H2 EN (active-low reset)
+CoreS3 GPIO18    -> H2 GPIO9/BOOT
 ```
 
-GPIO2 is also CoreS3 camera XCLK. Camera and Gateway H2 UART resources cannot be initialized simultaneously. This conflict is documented rather than hidden or bypassed.
+This replaces the incorrect GPIO10-TX/GPIO17-RX assignment in v0.5.3/v0.5.4. The corrected types make incorrect construction fail at compile time when applications use `CoreS3GatewayH2Resources`.
 
-## Migration from v0.5.1
+For UART-only OpenThread RCP operation on Module Gateway H2 v0.4:
 
-The blocking diagnostic/custom-protocol helper is preserved:
+- set all eight S1 switches OFF;
+- S1-4 is unused;
+- use 8-N-1 without hardware flow control;
+- use 460800 baud with the ESP-IDF v5.5.2 `examples/openthread/ot_rcp` image.
+
+`GATEWAY_H2_OPENTHREAD_BAUD`, `GatewayH2OpenThreadConfig::OPENTHREAD_RCP`, and `GatewayH2OpenThreadConfig::default()` now select 460800 baud. The generic lower-level 115200-baud constant remains unchanged for custom/diagnostic compatibility.
+
+## Buffered async transport
+
+The v0.5.2 buffered transport remains the recommended OpenThread path:
+
+- caller-owned static RX/TX storage;
+- direct `embedded_io_async 0.7::Read + Write` compatibility;
+- an independently scheduled UART pump that continuously drains RX;
+- typed UART failures and bounded monotonic diagnostics;
+- safe EN/BOOT reset and ROM-loader control;
+- no heap, hidden executor, OpenThread dependency, or application policy in the BSP.
+
+Applications using the typed resources must update their pin construction:
 
 ```rust
-let parts = CoreS3::init_gateway_h2(resources)?;
+CoreS3GatewayH2Resources {
+    uart1: peripherals.UART1,
+    tx: peripherals.GPIO17,
+    rx: peripherals.GPIO10,
+    enable: peripherals.GPIO7,
+    boot: peripherals.GPIO18,
+}
 ```
 
-The OpenThread helper has a correctness-required signature change:
+## OpenThread example
 
-```rust
-static H2_BUFFERS: StaticCell<CoreS3GatewayH2BufferedUartResources<
-    GATEWAY_H2_MIN_RX_BUFFER_SIZE,
-    GATEWAY_H2_MIN_TX_BUFFER_SIZE,
->> = StaticCell::new();
+`examples/gateway_h2_openthread` now goes beyond constructing `UartSpinelTransport`. It statically allocates all long-lived BSP/OpenThread resources, spawns the BSP UART pump independently, constructs `SpinelRadio`, and calls `Radio::init().await`.
 
-let parts = CoreS3::init_gateway_h2_openthread(
-    resources,
-    H2_BUFFERS.init(CoreS3GatewayH2BufferedUartResources::new()),
-    GatewayH2OpenThreadConfig::default(),
-)?;
+The bounded initialization performs the OpenThread crate's startup sequence, including Spinel reset, protocol-version query, required RCP capability checks, EUI-64 discovery, and radio capability discovery. It prints one of:
 
-// Spawn and continuously poll this in its own task:
-// parts.pump.run().await
-
-// Move parts.transport into the task that owns UartSpinelTransport.
+```text
+Gateway H2 Spinel startup PASS: ...
+Gateway H2 Spinel startup FAIL: ...
 ```
 
-Not polling `pump.run()` removes the continuous-RX guarantee and is an integration error.
+The example includes a local `esp_hal::time::Instant`-backed Embassy time driver for its platform-spin executor. This remains example policy and is not imposed by `core-s3`.
 
-## ESP-HAL 1.2.2 migration
+## Gateway H2 SPI status
 
-The workspace now uses `esp-hal = "=1.2.2"`. Existing board APIs remain available. Example-only migrations include:
+Gateway H2 SPI is not supported in v0.5.5.
 
-- camera DMA storage via `dma_rx_buffer!` and aligned `DmaRxBuf` values;
-- I2S `TdmConfig`, `dma_tx_buffer!`, and ownership-based transfer APIs.
+M5Stack's product documentation names optional `SPI_MOSI`, `SPI_MISO`, `SPI_CLK`, and `SPI_CS` routes, but the available authoritative material does not establish the OpenThread SPI interrupt/handshake route, complete DIP-switch semantics for a usable host protocol, or a compatible SPI-capable H2 firmware image. ESP-IDF's UART `ot_rcp` image is not assumed to support SPI.
 
-The shared LCD/TF-card implementation still owns SPI2, chip selects, and GPIO35 switching. No application-visible GPIO matrix handling was introduced.
+Safe SPI support would also need to join the BSP-owned LCD/TF shared-SPI2 arbitration and preserve GPIO35 D/C-to-MISO restoration. No raw or unvalidated SPI escape hatch was added.
 
-## Software validation
+## Validation
 
-Completed successfully:
+The following completed successfully:
 
 ```sh
 cargo +stable fmt --all -- --check
 cargo +stable test -p core-s3 --all-features --target aarch64-apple-darwin
+RUSTDOCFLAGS='-D warnings' cargo +stable doc -p core-s3 --all-features --no-deps
 cargo +esp check --workspace --all-features --release --target xtensa-esp32s3-none-elf
 cargo +esp clippy --workspace --all-features --release --target xtensa-esp32s3-none-elf -- -D warnings
-```
-
-Host tests: 65 passed.
-
-The final release-preparation run must also record:
-
-```sh
-cargo +stable check -p core-s3 --all-targets
-cargo +stable clippy -p core-s3 --all-targets -- -D warnings
-cargo +stable check -p core-s3 --no-default-features
-cargo +stable check -p core-s3 --features defmt
-cargo +esp build -p gateway_h2_transport --release --target xtensa-esp32s3-none-elf
 cargo +esp build -p gateway_h2_openthread --release --target xtensa-esp32s3-none-elf
-cargo +esp build -p display_sd_coexist --release --target xtensa-esp32s3-none-elf
 cargo +stable package -p core-s3 --allow-dirty
 ```
 
-## Hardware validation matrix
+Host result: 68 tests passed. The OpenThread example linked for `xtensa-esp32s3-none-elf`; the existing linker warning about an RWX LOAD segment remains. Packaging produced 27 files (320.1 KiB uncompressed, 78.0 KiB compressed), verification succeeded, and the archive contents were inspected.
 
-No v0.5.2 Gateway H2 RCP hardware validation has been run yet. Do not treat the following as passed until observed on real hardware.
+## Hardware status
 
-| #   | Action                                                         | Expected                                                       | Observed | Status  |
-| --- | -------------------------------------------------------------- | -------------------------------------------------------------- | -------- | ------- |
-| 1   | Verify stock RCP wiring/settings                               | GPIO1/GPIO2, 115200, 8-N-1, no flow control agree on both ends | Not run  | Pending |
-| 2   | Power-cycle CoreS3 and H2; request Spinel protocol/version     | Valid response, no `RxFailed`                                  | Not run  | Pending |
-| 3   | Repeat reset/reconnect cycles                                  | Transport and RCP recover consistently                         | Not run  | Pending |
-| 4   | Leave command task idle during unsolicited RX/property traffic | Pump continues draining; no UART FIFO overflow                 | Not run  | Pending |
-| 5   | Initialize OpenThread radio                                    | Real MAC capabilities reported                                 | Not run  | Pending |
-| 6   | Extended bounded traffic run                                   | RX/TX counters advance; error/overflow counters remain zero    | Not run  | Pending |
-| 7   | Run SD-before-LCD probe after HAL upgrade                      | Pre-inserted card probes successfully                          | Not run  | Pending |
-| 8   | Run alternating LCD/SD coexistence after HAL upgrade           | Display stable; SD read/write/readback succeeds                | Not run  | Pending |
+Previously supplied validation on a stacked M5Stack CoreS3 and Module Gateway H2 v0.4 established S3-hosted H2 ROM-loader entry, flashing and verification, bidirectional UART exchange at 460800 baud, Spinel startup, and RCP capability discovery using the hardware baseline documented above.
 
-Recommended commands for the board regressions:
+For this release candidate, the updated example was erased, programmed, and reset successfully over `/dev/cu.usbmodem11301`. `cargo embed` did not expose the firmware log, and a follow-up `espflash monitor` attempt failed with `Failed to initialize input reader`; therefore that particular run is inconclusive for the new PASS/FAIL output and is not counted as new protocol evidence.
+
+This release does not claim Gateway H2 SPI operation, Thread dataset attachment, routed Thread IPv6, SRP/DNS-SD, Matter traffic, or Matter-over-Thread.
+
+## Publication
+
+The `v0.5.5` tag triggers the crate-only trusted-publishing workflow, which runs:
 
 ```sh
-cargo +esp run -p sd_block_probe --release --target xtensa-esp32s3-none-elf
-cargo +esp run -p display_sd_coexist --release --target xtensa-esp32s3-none-elf
+cargo +stable publish -p core-s3
 ```
 
-## Release status
-
-The source and release metadata are prepared, but publishing and hardware-validation claims are intentionally withheld. Create/push a release tag or publish to crates.io only after explicit user approval and the required hardware results are recorded.
+No firmware artifacts are built or attached by the release workflow.

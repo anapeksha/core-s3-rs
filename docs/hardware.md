@@ -77,18 +77,18 @@ M5Unified's CoreS3 battery percentage path reads AXP2101 register `0xA4` directl
 
 ## Gateway H2 OpenThread transport
 
-The `gateway-h2` feature exposes protocol-neutral metadata/codecs and a statically buffered async UART byte stream for stock ESP32-H2 OpenThread RCP firmware. The official stacked route is UART1 TX GPIO10 -> H2 RXD and RX GPIO17 <- H2 TXD, normally 115200 baud, 8-N-1, without hardware flow control. GPIO7 drives active-low EN/reset and GPIO18 drives H2 GPIO9/BOOT. GPIO9 is pulled high for normal execution and must be low before EN rises to request ROM download mode.
+The `gateway-h2` feature exposes protocol-neutral metadata/codecs and a statically buffered async UART byte stream for stock ESP32-H2 OpenThread RCP firmware. The hardware-validated stacked Module Gateway H2 v0.4 route is UART1 TX GPIO17 -> H2 RXD and RX GPIO10 <- H2 TXD, 460800 baud, 8-N-1, without hardware flow control when using the ESP-IDF v5.5.2 `examples/openthread/ot_rcp` image. GPIO7 drives active-low EN/reset and GPIO18 drives H2 GPIO9/BOOT. GPIO9 is pulled high for normal execution and must be low before EN rises to request ROM download mode.
 
 `CoreS3::init_gateway_h2_openthread(...)` returns safe control, a transport implementing `embedded_io_async 0.7::Read + Write`, and a pump future. The pump exclusively owns the HAL UART and must run independently to continuously drain RX into caller-owned static storage. The BSP does not include `openthread`, `rs-matter`, datasets, commissioning, networking, or application orchestration.
 
-Module Gateway H2 v0.4 S1 routes PTA on positions 1-3, leaves position 4 unused, and routes SPI CS/MOSI/CLK/MISO on positions 5-8. UART-only operation requires routed positions 1,2,3,5,6,7,8 OFF. Software records an expected routing but cannot detect physical switch positions. H2 SPI remains unsupported because GPIO35/36/37 conflict with the BSP-owned LCD/TF-card SPI bus and GPIO13 conflicts with audio. PTA remains application-owned and opt-in; GPIO0 `WL_ACTIVE` conflicts with I2S MCLK.
+Module Gateway H2 v0.4 UART-only operation requires all eight S1 switches OFF; S1-4 is unused. Software records an expected routing but cannot detect physical switch positions. Product material describes optional SPI/PTA routing, but Gateway H2 SPI remains unsupported until authoritative route and switch documentation, a concrete SPI-capable H2 firmware/protocol, integration with the BSP-owned LCD/TF shared-SPI arbiter, and real bidirectional hardware validation are all available. PTA remains application-owned and opt-in; GPIO0 `WL_ACTIVE` conflicts with I2S MCLK.
 
 ## Validation checklist
 
 - Confirm LCD controller init sequence and color order on hardware.
 - Confirm backlight/reset control path through AXP2101/AW9523B.
 - Probe I²C addresses with a scanner example before enabling high-level drivers.
-- Confirm stacked Gateway H2 GPIO10/GPIO17 UART, GPIO7 EN, GPIO18 BOOT, S1 positions, firmware, and baud on the exact module revision.
+- Confirm stacked Gateway H2 TX GPIO17/RX GPIO10 UART, GPIO7 EN, GPIO18 BOOT, all S1 switches OFF, exact H2 firmware, and 460800 baud on Module Gateway H2 v0.4.
 - Validate `examples/sd_block_probe` on real CoreS3 hardware with an inserted valid TF card when changing SD acquisition behavior, including flash/cold-boot/reset with the card already inserted.
 - Validate `examples/display_sd_coexist` when changing shared SPI/GPIO35 behavior after LCD init; it should complete alternating LCD updates and raw SD read/write/readback while the display remains powered and initialized. The v0.5.1 batched-transfer path completed 250 cycles (`Writes: 000250`, `Reads: 000500`, `Errors: 0`) on real CoreS3 hardware with a pre-inserted card, repeated reset, cold boot, and remove/reinsert/reset.
 - Validate `examples/camera_capture` on real CoreS3 hardware when changing camera support: boot with `camera`, probe GC0308 product ID, capture repeated QQVGA RGB565 and grayscale frames, stop/restart capture, verify errors return instead of panicking, and confirm display/touch/PMIC/TF-card/Gateway-H2 APIs still compile with camera support enabled.

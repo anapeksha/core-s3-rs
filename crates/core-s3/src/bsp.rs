@@ -329,15 +329,15 @@ impl CoreS3Camera {
 
 /// ESP-HAL resources for the officially stacked CoreS3 Module Gateway H2.
 ///
-/// UART is fixed to CoreS3 TX GPIO10 -> H2 RXD and CoreS3 RX GPIO17 <- H2
+/// UART is fixed to CoreS3 TX GPIO17 -> H2 RXD and CoreS3 RX GPIO10 <- H2
 /// TXD. GPIO7 owns active-low H2 EN/reset and GPIO18 owns H2 GPIO9/BOOT.
 #[cfg(feature = "gateway-h2")]
 pub struct CoreS3GatewayH2Resources {
     pub uart1: esp_hal::peripherals::UART1<'static>,
     /// CoreS3 host TX connected to Gateway H2 RXD.
-    pub tx: esp_hal::peripherals::GPIO10<'static>,
+    pub tx: esp_hal::peripherals::GPIO17<'static>,
     /// CoreS3 host RX connected to Gateway H2 TXD.
-    pub rx: esp_hal::peripherals::GPIO17<'static>,
+    pub rx: esp_hal::peripherals::GPIO10<'static>,
     /// Active-low ESP32-H2 enable/reset.
     pub enable: esp_hal::peripherals::GPIO7<'static>,
     /// ESP32-H2 GPIO9 ROM-download strap; low requests download mode.
@@ -1587,6 +1587,10 @@ impl CoreS3 {
     }
 
     /// Initializes Gateway H2 UART for OpenThread RCP/Spinel-oriented downstream firmware.
+    ///
+    /// Module Gateway H2 v0.4 UART operation requires all eight S1 switches OFF;
+    /// S1-4 is unused. The default configuration uses 460800 baud for the
+    /// ESP-IDF v5.5.2 `examples/openthread/ot_rcp` image.
     ///
     /// This helper does not validate the attached H2 firmware mode. Applications
     /// must flash/select a real OpenThread RCP/NCP firmware and implement Spinel

@@ -313,7 +313,7 @@ dependencies = [
 
 [[package]]
 name = "core-s3"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "critical-section",
  "defmt",
@@ -1416,6 +1416,7 @@ version = "0.1.0"
 dependencies = [
  "core-s3",
  "embassy-executor",
+ "embassy-time-driver",
  "esp-backtrace",
  "esp-bootloader-esp-idf",
  "esp-hal",

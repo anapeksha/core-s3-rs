@@ -33,7 +33,7 @@ Default builds remain HAL-independent and `no_std`.
 
 ```toml
 [dependencies]
-core-s3 = { version = "0.5.4", features = ["esp-hal"] }
+core-s3 = { version = "0.5.5", features = ["esp-hal"] }
 ```
 
 ```rust
@@ -80,8 +80,8 @@ Capture uses caller-provided ESP-HAL DMA buffers. GPIO2 is camera XCLK and confl
 The official stacked Module Gateway H2 route is:
 
 ```text
-CoreS3 TX GPIO10 -> H2 RXD
-CoreS3 RX GPIO17 <- H2 TXD
+CoreS3 TX GPIO17 -> H2 RXD
+CoreS3 RX GPIO10 <- H2 TXD
 CoreS3 GPIO7     -> H2 EN (active-low reset)
 CoreS3 GPIO18    -> H2 GPIO9/BOOT
 ```
@@ -92,13 +92,13 @@ CoreS3 GPIO18    -> H2 GPIO9/BOOT
 - an independently spawned UART pump that continuously drains RX;
 - safe reset and ROM-bootloader control.
 
-The BSP does not depend on OpenThread. `examples/gateway_h2_openthread` verifies integration with `openthread 0.4.0`'s `UartSpinelTransport`.
+The BSP does not depend on OpenThread. `examples/gateway_h2_openthread` uses `openthread 0.4.0`'s `UartSpinelTransport` and runs the bounded `SpinelRadio::init()` handshake to query protocol and RCP radio capabilities.
 
 ### Gateway H2 DIP switches
 
-For UART-only RCP operation on Module Gateway H2 v0.4, set routed positions **S1-1, S1-2, S1-3, S1-5, S1-6, S1-7, and S1-8 OFF**. S1-4 is unused. UART, EN, and BOOT are fixed M-Bus routes.
+For UART-only RCP operation on Module Gateway H2 v0.4, set **all eight S1 switches OFF**. S1-4 is unused. UART, EN, and BOOT are fixed M-Bus routes. `GatewayH2OpenThreadConfig::default()` selects 460800 baud for the hardware-validated ESP-IDF v5.5.2 `examples/openthread/ot_rcp` image.
 
-H2 SPI is unsupported because its optional routes conflict with the BSP-owned LCD/TF-card bus on GPIO35/36/37 and audio output on GPIO13. PTA is opt-in metadata only; GPIO0 `WL_ACTIVE` conflicts with audio I2S MCLK. Software cannot detect physical DIP positions.
+H2 SPI is unsupported. M5Stack's product PinMap documents optional `SPI_MOSI`, `SPI_MISO`, `SPI_CLK`, and `SPI_CS` M-Bus routes, but does not document the RCP interrupt/handshake route required by OpenThread SPI framing or identify a compatible H2 firmware/protocol. Safe support also requires integration with the BSP-owned LCD/TF-card bus on GPIO35/36/37; the optional CS route conflicts with audio output on GPIO13. PTA is opt-in metadata only; GPIO0 `WL_ACTIVE` conflicts with audio I2S MCLK. Software cannot detect physical DIP positions.
 
 ## Building
 
@@ -116,7 +116,7 @@ Consumer applications own Wi-Fi/IP, Matter/OpenThread/Zigbee runtimes, datasets,
 
 ## Hardware status
 
-Shared LCD/TF-card coexistence and the GC0308 camera preview have been validated on real CoreS3 hardware. The corrected Gateway H2 GPIO10/GPIO17/GPIO7/GPIO18 path has been smoke-tested for CoreS3 boot, reset, and buffered UART initialization on CoreS3 rev1 + Gateway H2 v0.4; a real Spinel exchange remains unvalidated.
+Shared LCD/TF-card coexistence and the GC0308 camera preview have been validated on real CoreS3 hardware. The Gateway H2 v0.4 UART baseline (TX GPIO17, RX GPIO10, EN GPIO7, BOOT GPIO18, 460800 baud, all S1 switches OFF) has passed S3-hosted flashing, verification, UART exchange, Spinel startup, and RCP capability discovery. Dataset attachment and Matter-over-Thread remain application-level validation work. Gateway H2 SPI remains unsupported pending authoritative routes, SPI-capable H2 firmware/protocol, BSP integration, and real hardware validation.
 
 ## License
 

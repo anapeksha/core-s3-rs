@@ -57,8 +57,8 @@ fn main() -> ! {
 
     let h2 = CoreS3::init_gateway_h2(CoreS3GatewayH2Resources {
         uart1: peripherals.UART1,
-        tx: peripherals.GPIO10,
-        rx: peripherals.GPIO17,
+        tx: peripherals.GPIO17,
+        rx: peripherals.GPIO10,
         enable: peripherals.GPIO7,
         boot: peripherals.GPIO18,
     });
