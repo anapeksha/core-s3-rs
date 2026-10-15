@@ -97,7 +97,6 @@ Consumer applications own:
 - Avoid heap allocation in library code.
 - Prefer `embedded-hal` / `embedded-hal-async` traits.
 - Do not force Embassy on all users; `rtos` and `radio-coexistence` remain opt-in.
-- All v0.5.6 hardware gates remain pending. Do not claim RTOS/radio hardware validation, publish, merge, or tag v0.5.6 until `docs/v0.5.6-hardware-validation.md` is completed with passing evidence.
 - Do not add GUI frameworks unless explicitly requested and justified.
 - Do not add Matter/OpenThread/Zigbee protocol stacks to `core-s3`.
 - Keep examples visible and useful on real CoreS3 hardware.
