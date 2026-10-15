@@ -16,6 +16,46 @@
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
+/// Conservative minimum heap capacity in bytes. This is registration policy,
+/// not a promise that RTOS/radio/application allocations will fit.
+pub const MIN_INTERNAL_HEAP_BYTES: usize = 4096;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HeapError {
+    EmptyStorage,
+    StorageTooSmall,
+    StorageAlreadyConsumed,
+    GlobalAlreadyInitialized,
+    NotInternalRam,
+    NotInitialized,
+}
+
+/// Host-pure heap capacity validation; alignment is provided by the storage type.
+pub const fn validate_internal_heap_size(bytes: usize) -> Result<(), HeapError> {
+    if bytes == 0 {
+        Err(HeapError::EmptyStorage)
+    } else if bytes < MIN_INTERNAL_HEAP_BYTES {
+        Err(HeapError::StorageTooSmall)
+    } else {
+        Ok(())
+    }
+}
+
+/// Fixed-size, pointer-free snapshot of the entire global heap, in bytes.
+/// This includes any regions subsequently registered outside this layer.
+/// Optional counters are unavailable (`None`): the current dependency contract
+/// does not enable esp-alloc's `internal-heap-stats` feature. No substitute
+/// estimates are fabricated, even if downstream feature unification enables it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HeapSnapshot {
+    pub total: usize,
+    pub current: usize,
+    pub max: Option<usize>,
+    pub free: usize,
+    pub allocated: Option<u64>,
+    pub freed: Option<u64>,
+}
+
 /// Conservative wrapper policy, not a guarantee against worker stack overflow.
 pub const MIN_WORKER_STACK_BYTES: usize = 4096;
 /// Maximum wrapper readiness wait.
@@ -149,6 +189,124 @@ mod target {
     use super::*;
     use esp_hal::peripherals::{CPU_CTRL, FROM_CPU_INTR0, FROM_CPU_INTR1};
     use static_cell::StaticCell;
+
+    static HEAP_REGISTERED: Claim = Claim::new();
+
+    #[repr(align(16))]
+    struct HeapBytes<const N: usize> {
+        bytes: core::mem::MaybeUninit<[u8; N]>,
+    }
+
+    /// Caller-static internal heap backing, with capacity `N` bytes (excluding
+    /// alignment padding and wrapper metadata). Declare with `static`, in normal
+    /// internal `.bss`/`.data` RAM under the CoreS3 linker layout. Do not place it
+    /// in PSRAM, a custom external-RAM link section, or recycled boot memory.
+    /// The linker must reserve this object exclusively for its entire lifetime.
+    /// A conservative ESP32-S3 internal-DRAM range check rejects other placement.
+    ///
+    /// Initialize before scheduler startup and before any other heap registration.
+    /// This boundary permits only one global registration, not additional regions.
+    /// Direct upstream registrations must not race initialization; they are outside
+    /// this layer's ownership protocol. Failed claims are never released.
+    pub struct InternalHeapStorage<const N: usize> {
+        cell: static_cell::ConstStaticCell<HeapBytes<N>>,
+        consumed: Claim,
+        initialized: AtomicBool,
+    }
+
+    impl<const N: usize> InternalHeapStorage<N> {
+        pub const fn new() -> Self {
+            Self {
+                cell: static_cell::ConstStaticCell::new(HeapBytes {
+                    bytes: core::mem::MaybeUninit::uninit(),
+                }),
+                consumed: Claim::new(),
+                initialized: AtomicBool::new(false),
+            }
+        }
+
+        /// Register exactly once as Internal with `esp_alloc::HEAP`.
+        /// No backing references or pointers are returned to the caller.
+        pub fn initialize(&'static self) -> Result<(), HeapError> {
+            validate_internal_heap_size(N)?;
+            if !self.consumed.take() {
+                return Err(HeapError::StorageAlreadyConsumed);
+            }
+            if !HEAP_REGISTERED.take() {
+                return Err(HeapError::GlobalAlreadyInitialized);
+            }
+            let backing = self
+                .cell
+                .try_take()
+                .ok_or(HeapError::StorageAlreadyConsumed)?;
+            let ptr = backing.bytes.as_mut_ptr().cast::<u8>();
+            let start = ptr as usize;
+            let end = start.checked_add(N).ok_or(HeapError::NotInternalRam)?;
+            // Conservative CoreS3 / ESP32-S3 byte-addressable internal DRAM window.
+            if start < 0x3fc8_8000 || end > 0x3fd0_0000 {
+                return Err(HeapError::NotInternalRam);
+            }
+            if esp_alloc::HEAP
+                .stats()
+                .region_stats
+                .iter()
+                .any(Option::is_some)
+            {
+                return Err(HeapError::GlobalAlreadyInitialized);
+            }
+            // SAFETY: The caller-static private ConstStaticCell permanently
+            // owns this live allocation and yields its unique mutable backing
+            // only once. No references/pointers escape except to the allocator,
+            // and none are used here after registration. HeapBytes guarantees
+            // 16-byte alignment; N is validated nonzero and conservatively
+            // large. Normal internal static placement is a linker assumption,
+            // reinforced by the full-range internal-DRAM check above. The
+            // linker-reserved object does not overlap other live objects;
+            // the empty global heap check excludes existing regions. Local/global
+            // atomic claims enforce one-time registration and serialize this BSP
+            // boundary. Direct upstream registration is outside this protocol and
+            // must not race the check/add sequence, as documented above. Each
+            // allocator API manages its own locking; no outer lock is held.
+            #[allow(unsafe_code)]
+            unsafe {
+                esp_alloc::HEAP.add_region(esp_alloc::HeapRegion::new(
+                    ptr,
+                    N,
+                    esp_alloc::MemoryCapability::Internal.into(),
+                ));
+            }
+            self.initialized.store(true, Ordering::Release);
+            Ok(())
+        }
+
+        /// Snapshot after successful registration; no allocation, polling, or
+        /// unbounded collection. The allocator briefly locks its fixed regions.
+        pub fn snapshot(&self) -> Result<HeapSnapshot, HeapError> {
+            if !self.initialized.load(Ordering::Acquire) {
+                return Err(HeapError::NotInitialized);
+            }
+            let stats = esp_alloc::HEAP.stats();
+            Ok(HeapSnapshot {
+                total: stats.size,
+                current: stats.current_usage,
+                max: None,
+                free: stats
+                    .region_stats
+                    .iter()
+                    .flatten()
+                    .map(|region| region.free)
+                    .sum(),
+                allocated: None,
+                freed: None,
+            })
+        }
+    }
+
+    impl<const N: usize> Default for InternalHeapStorage<N> {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
 
     static STARTED: Claim = Claim::new();
     static WORKER: Claim = Claim::new();
@@ -293,11 +451,29 @@ mod target {
 }
 
 #[cfg(target_arch = "xtensa")]
-pub use target::{CoreS3Runtime, Cpu1WorkerStack, PrimaryExecutorStorage};
+pub use target::{CoreS3Runtime, Cpu1WorkerStack, InternalHeapStorage, PrimaryExecutorStorage};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn heap_size_validation() {
+        assert_eq!(validate_internal_heap_size(0), Err(HeapError::EmptyStorage));
+        assert_eq!(
+            validate_internal_heap_size(1),
+            Err(HeapError::StorageTooSmall)
+        );
+        assert_eq!(
+            validate_internal_heap_size(MIN_INTERNAL_HEAP_BYTES - 1),
+            Err(HeapError::StorageTooSmall)
+        );
+        assert_eq!(validate_internal_heap_size(MIN_INTERNAL_HEAP_BYTES), Ok(()));
+        assert_eq!(
+            validate_internal_heap_size(MIN_INTERNAL_HEAP_BYTES + 1),
+            Ok(())
+        );
+    }
 
     #[test]
     fn stack_validation() {

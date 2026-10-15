@@ -23,6 +23,7 @@ rtos = [
     "dep:embassy-executor",
     "dep:embassy-sync",
     "dep:embassy-time",
+    "dep:esp-alloc",
     "dep:esp-rtos",
     "dep:static_cell",
     "esp-rtos/embassy",
@@ -64,6 +65,7 @@ static_cell = { workspace = true, optional = true }
 
 
 [target.'cfg(target_arch = "xtensa")'.dependencies]
+esp-alloc = { workspace = true, optional = true }
 esp-hal = { workspace = true, optional = true }
 esp-radio = { workspace = true, optional = true }
 esp-rtos = { workspace = true, optional = true }
