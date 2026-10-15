@@ -350,7 +350,7 @@ pub struct CoreS3GatewayH2Control {
     enable: CoreS3Output,
     boot: CoreS3Output,
     mode: GatewayH2ControlMode,
-    pump_active: Option<&'static AtomicBool>,
+    transport_owned: Option<&'static AtomicBool>,
 }
 
 /// Gateway H2 control transition error.
@@ -358,7 +358,8 @@ pub struct CoreS3GatewayH2Control {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GatewayH2ControlError {
-    /// Stop/drop the UART pump before resetting or changing the boot strap.
+    /// Drop the UART pump owner before resetting or changing the boot strap.
+    /// This applies before the pump is first polled as well as while it runs.
     TransportActive,
 }
 
@@ -404,8 +405,8 @@ impl CoreS3GatewayH2Control {
 
     fn ensure_transport_stopped(&self) -> Result<(), GatewayH2ControlError> {
         if self
-            .pump_active
-            .is_some_and(|active| active.load(Ordering::Acquire))
+            .transport_owned
+            .is_some_and(|owned| owned.load(Ordering::Acquire))
         {
             Err(GatewayH2ControlError::TransportActive)
         } else {
@@ -448,7 +449,7 @@ pub struct CoreS3GatewayH2BufferedUartResources<const RX: usize, const TX: usize
     tx_error: AtomicU8,
     rx_error_signal: Signal<CriticalSectionRawMutex, ()>,
     tx_error_signal: Signal<CriticalSectionRawMutex, ()>,
-    pump_active: AtomicBool,
+    transport_owned: AtomicBool,
     rx_bytes: AtomicU32,
     tx_bytes: AtomicU32,
     rx_errors: AtomicU32,
@@ -470,7 +471,7 @@ impl<const RX: usize, const TX: usize> CoreS3GatewayH2BufferedUartResources<RX, 
             tx_error: AtomicU8::new(0),
             rx_error_signal: Signal::new(),
             tx_error_signal: Signal::new(),
-            pump_active: AtomicBool::new(false),
+            transport_owned: AtomicBool::new(false),
             rx_bytes: AtomicU32::new(0),
             tx_bytes: AtomicU32::new(0),
             rx_errors: AtomicU32::new(0),
@@ -541,6 +542,9 @@ pub struct CoreS3GatewayH2AsyncUart<'a, const RX: usize, const TX: usize> {
 }
 
 /// UART owner that must be polled continuously in an independent task.
+///
+/// Owning this value reserves EN/BOOT transitions even before `run()` is first
+/// polled. Drop it before using the control object to reset or strap the H2.
 #[cfg(feature = "gateway-h2")]
 pub struct CoreS3GatewayH2UartPump<'a, const RX: usize, const TX: usize> {
     uart: Option<Uart<'static, esp_hal::Async>>,
@@ -669,9 +673,12 @@ impl<const RX: usize, const TX: usize> embedded_io_async::Write
 #[cfg(feature = "gateway-h2")]
 impl<'a, const RX: usize, const TX: usize> CoreS3GatewayH2UartPump<'a, RX, TX> {
     /// Continuously service UART RX and TX. This future is intentionally
-    /// non-terminating and must be spawned independently from the Spinel user.
+    /// non-terminating and must be spawned independently from the framed-protocol
+    /// user on the supported primary executor. RX hardware errors are counted and
+    /// surfaced once while the loop keeps draining subsequent bytes, allowing an
+    /// HDLC-style decoder to discard a partial frame and resynchronize at a flag.
     pub async fn run(mut self) -> ! {
-        self.shared.pump_active.store(true, Ordering::Release);
+        self.shared.transport_owned.store(true, Ordering::Release);
         let (mut uart_rx, mut uart_tx) = self.uart.take().expect("UART pump owns UART").split();
         let shared_rx = self.shared;
         let shared_tx = self.shared;
@@ -739,7 +746,7 @@ impl<'a, const RX: usize, const TX: usize> CoreS3GatewayH2UartPump<'a, RX, TX> {
 #[cfg(feature = "gateway-h2")]
 impl<const RX: usize, const TX: usize> Drop for CoreS3GatewayH2UartPump<'_, RX, TX> {
     fn drop(&mut self) {
-        self.shared.pump_active.store(false, Ordering::Release);
+        self.shared.transport_owned.store(false, Ordering::Release);
         let stopped = encode_gateway_h2_uart_error(GatewayH2UartError::PumpStopped);
         self.shared.rx_error.store(stopped, Ordering::Release);
         self.shared.tx_error.store(stopped, Ordering::Release);
@@ -1590,7 +1597,10 @@ impl CoreS3 {
     ///
     /// Module Gateway H2 v0.4 UART operation requires all eight S1 switches OFF;
     /// S1-4 is unused. The default configuration uses 460800 baud for the
-    /// ESP-IDF v5.5.2 `examples/openthread/ot_rcp` image.
+    /// ESP-IDF v5.5.2 `examples/openthread/ot_rcp` image. UART1/GPIO17/GPIO10 and
+    /// GPIO7/GPIO18 are independent from the Wi-Fi/BT peripherals and from the
+    /// BSP-owned LCD/TF SPI2 pins, so this API composes with `rtos`,
+    /// `radio-coexistence`, and `sdmmc` without pin aliasing.
     ///
     /// This helper does not validate the attached H2 firmware mode. Applications
     /// must flash/select a real OpenThread RCP/NCP firmware and implement Spinel
@@ -1624,8 +1634,12 @@ impl CoreS3 {
         let control = configure_gateway_h2_control(
             resources.enable,
             resources.boot,
-            Some(&shared.pump_active),
+            Some(&shared.transport_owned),
         );
+        // The returned pump already owns UART1, even before its future is first
+        // polled. Block EN/BOOT transitions throughout that ownership window;
+        // dropping the pump releases the control object for reset/boot changes.
+        shared.transport_owned.store(true, Ordering::Release);
 
         Ok(CoreS3GatewayH2OpenThreadParts {
             transport: CoreS3GatewayH2AsyncUart { shared },
@@ -1667,7 +1681,7 @@ impl CoreS3 {
 fn configure_gateway_h2_control(
     enable: esp_hal::peripherals::GPIO7<'static>,
     boot: esp_hal::peripherals::GPIO18<'static>,
-    pump_active: Option<&'static AtomicBool>,
+    transport_owned: Option<&'static AtomicBool>,
 ) -> CoreS3GatewayH2Control {
     // Keep EN low until GPIO9/BOOT is explicitly deasserted. This prevents a
     // CoreS3 reset from accidentally sampling the ESP32-H2 download strap low.
@@ -1677,7 +1691,7 @@ fn configure_gateway_h2_control(
         enable,
         boot,
         mode: GatewayH2ControlMode::Normal,
-        pump_active,
+        transport_owned,
     };
     let mut delay = Delay::new();
     control.apply_sequence(&mut delay, &GATEWAY_H2_RESET_SEQUENCE);
