@@ -6,6 +6,7 @@
 //! Set all eight S1 DIP switches OFF. S1-4 is unused. This example targets the
 //! ESP-IDF v5.5.2 `examples/openthread/ot_rcp` UART image at 460800 baud.
 
+use core_s3::rtos::{CoreS3Runtime, PrimaryExecutorStorage, RuntimeConfig};
 use core_s3::{
     CoreS3,
     bsp::{
@@ -16,9 +17,8 @@ use core_s3::{
         GATEWAY_H2_MIN_RX_BUFFER_SIZE, GATEWAY_H2_MIN_TX_BUFFER_SIZE, GatewayH2OpenThreadConfig,
     },
 };
-use embassy_executor::{Executor, Spawner};
-use embassy_time_driver::Driver;
 use esp_backtrace as _;
+use esp_hal::timer::timg::TimerGroup;
 use openthread::{
     Radio,
     spinel::{SpinelRadio, SpinelRadioResources, UartSpinelTransport, UartTransportResources},
@@ -27,25 +27,7 @@ use static_cell::StaticCell;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
-struct SpinTimeDriver;
-
-impl Driver for SpinTimeDriver {
-    fn now(&self) -> u64 {
-        esp_hal::time::Instant::now()
-            .duration_since_epoch()
-            .as_micros()
-    }
-
-    fn schedule_wake(&self, _at: u64, waker: &core::task::Waker) {
-        // The platform-spin executor polls continuously. Waking immediately
-        // keeps Embassy timers progressing without claiming a hardware alarm.
-        waker.wake_by_ref();
-    }
-}
-
-embassy_time_driver::time_driver_impl!(static TIME_DRIVER: SpinTimeDriver = SpinTimeDriver);
-
-static EXECUTOR: StaticCell<Executor> = StaticCell::new();
+static EXECUTOR: PrimaryExecutorStorage = PrimaryExecutorStorage::new();
 static BSP_UART_BUFFERS: StaticCell<
     CoreS3GatewayH2BufferedUartResources<
         GATEWAY_H2_MIN_RX_BUFFER_SIZE,
@@ -96,6 +78,13 @@ async fn discover_rcp_capabilities(
 #[esp_hal::main]
 fn main() -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default());
+    let timers = TimerGroup::new(peripherals.TIMG0);
+    let runtime = CoreS3Runtime::start(
+        RuntimeConfig::default(),
+        timers.timer0,
+        peripherals.FROM_CPU_INTR0,
+    )
+    .expect("start CoreS3 runtime");
     let parts = CoreS3::init_gateway_h2_openthread(
         CoreS3GatewayH2Resources {
             uart1: peripherals.UART1,
@@ -115,11 +104,14 @@ fn main() -> ! {
         parts.max_frame_size
     );
 
-    EXECUTOR.init(Executor::new()).run(move |spawner: Spawner| {
+    match runtime.run(&EXECUTOR, move |spawner| {
         spawner.spawn(run_uart_pump(parts.pump).expect("spawn Gateway H2 UART pump"));
         spawner.spawn(
             discover_rcp_capabilities(parts.transport)
                 .expect("spawn bounded OpenThread RCP discovery"),
         );
-    })
+    }) {
+        Ok(never) => match never {},
+        Err(error) => panic!("primary executor: {error:?}"),
+    }
 }

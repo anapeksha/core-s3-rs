@@ -5,9 +5,9 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-core-s3 = { workspace = true, features = ["esp-hal", "gateway-h2"] }
+core-s3 = { workspace = true, features = ["rtos", "gateway-h2"] }
 embassy-executor.workspace = true
-embassy-time-driver.workspace = true
+
 esp-backtrace.workspace = true
 esp-bootloader-esp-idf.workspace = true
 esp-hal.workspace = true
