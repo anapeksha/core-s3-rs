@@ -30,8 +30,10 @@ use esp_hal::{
         master::{Config as SpiConfig, ConfigError as SpiConfigError, Spi},
     },
     time::Rate,
-    uart::{Config as UartConfig, Uart},
 };
+
+#[cfg(feature = "gateway-h2")]
+use esp_hal::uart::{Config as UartConfig, Uart};
 
 #[cfg(feature = "camera")]
 use esp_hal::{
@@ -108,6 +110,7 @@ pub type CoreS3SharedDisplay = Display<CoreS3SharedLcdSpiDevice, CoreS3SharedDc,
 /// SD parts returned by [`CoreS3::init_sd_on_shared_spi`].
 pub type CoreS3EspHalSdParts = CoreS3SdParts<CoreS3SharedSdSpiDevice, Delay>;
 /// Concrete blocking UART used for the Gateway H2 host link.
+#[cfg(feature = "gateway-h2")]
 pub type CoreS3GatewayH2Uart = Uart<'static, Blocking>;
 /// Concrete ESP-HAL LCD_CAM camera driver used by CoreS3 camera support.
 #[cfg(feature = "camera")]
