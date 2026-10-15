@@ -18,6 +18,8 @@ pub mod display;
 pub mod motion;
 pub mod pins;
 pub mod power;
+#[cfg(all(feature = "radio-coexistence", target_arch = "xtensa"))]
+pub mod radio;
 pub mod rtc;
 #[cfg(feature = "rtos")]
 pub mod rtos;
