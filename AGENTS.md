@@ -18,6 +18,8 @@ The BSP owns:
 - small reusable peripheral drivers/config helpers
 - HAL-agnostic types and pure logic
 - ESP-HAL board bring-up helpers behind `feature = "esp-hal"` and `target_arch = "xtensa"`
+- single-primary-executor `esp-rtos` startup and optional synchronous CPU1 worker primitives behind `feature = "rtos"`
+- protocol-neutral Wi-Fi/BLE controller ownership and upstream coexistence setup behind `feature = "radio-coexistence"`
 - Gateway H2 UART/framing transport primitives
 
 Consumer applications own:
@@ -28,6 +30,7 @@ Consumer applications own:
 - Home Assistant behavior
 - camera image-processing/QR-decoding policy and frame persistence
 - high-throughput I2S DMA capture/playback
+- Wi-Fi connect/reconnect/IP/socket policy and BLE host/protocol/pool sizing
 - product secrets, credentials, identities, and provisioning
 
 ## Module map
@@ -45,6 +48,8 @@ Consumer applications own:
 - `rtc`: BM8563 driver and `no_std` date/time types.
 - `audio`: ES7210/AW88298 configuration helpers.
 - `camera`: feature-gated CoreS3 GC0308 metadata, SCCB helpers, and ESP-HAL LCD_CAM camera bring-up/capture wrappers.
+- `rtos`: one `esp-rtos` startup token, one primary Embassy executor, safe internal heap registration/storage, static one-shot tasks, and an optional synchronous CPU1 worker with caller-static bootstrap stack.
+- `radio`: feature-gated ownership of unique Wi-Fi/BLE peripheral tokens, requested station/AP interfaces, controller initialization, and upstream coexistence enablement; no IP or BLE host policy.
 - `gateway_h2`: Gateway H2 metadata, Matter/Thread config structs, and H2 framing transport.
 
 ## CoreS3 shared LCD/TF-card SPI notes
@@ -55,12 +60,28 @@ Consumer applications own:
 - Cooperative LCD/SD sharing must keep LCD CS and TF-card CS from being active simultaneously and restore safe idle after error paths: LCD CS high, TF-card CS high, GPIO35 SD MISO/input default, SPI2 SD/full-duplex-safe mode.
 - Keep GPIO35 aliasing hidden inside the BSP; downstream applications must not manually steal or mode-switch GPIO35.
 
+## RTOS and radio coexistence notes
+
+- Keep exactly one BSP-owned `esp-rtos` startup and one primary Embassy executor/time driver on CPU0. The optional CPU1 path is one synchronous worker with permanently owned caller-static bootstrap stack, not another executor.
+- Do not add per-task stack, priority, arbitrary affinity, stack high-water, second-executor, or second-time-driver APIs.
+- Keep `InternalHeapStorage` safe: private aligned caller-static backing, one-time internal-RAM registration, no escaped references/pointers, no reuse after failure, and one narrowly audited allocator-registration unsafe boundary.
+- Preserve initialization order: HAL; internal heap when needed; `CoreS3Runtime::start`; optional CPU1 worker; board/H2/radio initialization with interrupts enabled; `CoreS3Runtime::run` last.
+- `radio-coexistence` owns controller/peripheral initialization only. Applications own credentials, start/connect/reconnect behavior, IP networking, sockets, BLE host/protocol runtimes, and host pool sizing.
+- Preserve unique `WIFI`/`BT` token ownership and upstream RAII behavior. Do not clone/steal tokens, invent retry guarantees, log secrets/payloads, or claim coexistence without real simultaneous-traffic validation.
+- Keep the v0.5.6 dependency family together: `esp-hal 1.2.2`, `esp-rtos 0.4.0`, `esp-radio 1.0.0-beta.1`, `esp-radio-rtos-driver 0.4.2`, `esp-alloc 0.11.0`, `esp-rom-sys 0.1.5`, `embassy-time-queue-utils 0.3.2`, `embassy-executor 0.10`, `embassy-time 0.5.1`, `embedded-io-async 0.7`, and `static_cell 2.1.1`.
+- Default host MSRV remains workspace Rust 1.88 (tested stable 1.98); ESP dependencies require Rust 1.95 or newer and are tested with `esp` 1.97 nightly.
+- `esp-radio 1.0.0-beta.1` is the latest published staged baseline. The requested `https://docs.rs/esp-radio/1.0.0-beta.2/esp_radio/` URL is currently unpublished/404; never claim beta.2 availability or validation.
+- Do not add an `rtos-task` alias; it was never published.
+- Keep example configuration application-owned through `option_env!`: `RADIO_WIFI_SSID`, `RADIO_WIFI_PASSWORD` (explicit empty means open AP), `RADIO_ECHO_IPV4`, `RADIO_ECHO_PORT`, and combined-harness `RADIO_BLE_SCAN=1`. Values are embedded in artifacts even when withheld from logs.
+- The combined harness only performs non-destructive SD reads; write/readback/restore is NOT RUN. Scans do not prove GATT/L2CAP exchanges, Spinel discovery does not prove Thread traffic, and bounded iteration counts do not enforce deadlines around blocking LCD/SD I/O. Never turn partial observations into aggregate PASS claims.
+
 ## CoreS3 Gateway H2 notes
 
 - The hardware-validated stacked Module Gateway H2 v0.4 UART is CoreS3 TX GPIO17 -> H2 RXD and CoreS3 RX GPIO10 <- H2 TXD; GPIO7 owns active-low EN and GPIO18 owns H2 GPIO9/BOOT.
 - Do not reintroduce PORT.A GPIO1/GPIO2 as the stacked-module route.
 - UART-only OpenThread operation requires the optional S1 SPI/PTA routes disconnected. H2 SPI is unsupported unless integrated into the existing BSP LCD/SD shared-SPI arbiter.
 - GPIO0 PTA conflicts with audio I2S MCLK; PTA ownership must remain explicit and opt-in.
+- H2 UART/EN/BOOT composes with the S3 Wi-Fi/BLE controllers, but H2 remains an independently serviced framed transport. Reserve GPIO17/GPIO10/GPIO7/GPIO18 and do not hand those controls to radio or application GPIO users.
 
 ## CoreS3 camera notes
 
@@ -75,7 +96,8 @@ Consumer applications own:
 - Preserve `#![no_std]`.
 - Avoid heap allocation in library code.
 - Prefer `embedded-hal` / `embedded-hal-async` traits.
-- Do not force Embassy on all users.
+- Do not force Embassy on all users; `rtos` and `radio-coexistence` remain opt-in.
+- All v0.5.6 hardware gates remain pending. Do not claim RTOS/radio hardware validation, publish, merge, or tag v0.5.6 until `docs/v0.5.6-hardware-validation.md` is completed with passing evidence.
 - Do not add GUI frameworks unless explicitly requested and justified.
 - Do not add Matter/OpenThread/Zigbee protocol stacks to `core-s3`.
 - Keep examples visible and useful on real CoreS3 hardware.

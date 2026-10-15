@@ -17,7 +17,7 @@ Source documents supplied during BSP creation:
 
 ## CPU cores
 
-ESP32-S3 is a dual-core Xtensa LX7 MCU. CoreS3 firmware starts on the PRO CPU; the APP CPU is available through `esp_hal::system::CpuControl`. Use `examples/dual_core` as the BSP reference for starting the second core with an explicit stack.
+ESP32-S3 is a dual-core Xtensa LX7 MCU. With feature `rtos`, `CoreS3Runtime::start(...)` owns the single `esp-rtos` startup and `CoreS3Runtime::run(...)` owns the single primary Embassy executor/time driver on CPU0. `start_worker(...)` may start one synchronous CPU1 worker using a permanently owned caller-static `Cpu1WorkerStack`; it is not a second executor. The BSP intentionally exposes no per-task stacks, priorities, arbitrary affinity, stack high-water API, second executor, or second time driver. Use `examples/dual_core` as the reference sequence.
 
 ## Shared LCD / TF-card SPI wiring
 
@@ -75,15 +75,31 @@ v0.5.0 supports QQVGA RGB565 and QQVGA grayscale/luminance configuration only. `
 
 M5Unified's CoreS3 battery percentage path reads AXP2101 register `0xA4` directly. `core-s3` follows that behavior through `Axp2101::battery_level_percent()` and uses voltage-derived percentage only as a coarse fallback. AXP2101 register `0x01` bits 5:6 report charging/ discharging/standby state; register `0x00` bit `0x20` reports VBUS-good external power, and bit `0x08` reports battery presence. CoreS3 does not expose battery current through the AXP2101 path used by this BSP, so current-based coulomb counting is not available via AXP2101 alone.
 
+## RTOS and radio controllers
+
+The staged v0.5.6 `rtos` path requires this order: initialize ESP-HAL; initialize caller-static `InternalHeapStorage` if upstream components allocate; call `CoreS3Runtime::start(...)`; optionally start the CPU1 worker; initialize board, H2, and radio resources with interrupts enabled; call `CoreS3Runtime::run(...)` last. `InternalHeapStorage` privately retains aligned internal-RAM backing, permits one registration, never returns a backing reference/pointer, and cannot be reused after a failed claim. The wrapper's sole unsafe boundary is the documented `esp-alloc` region registration. `snapshot()` reports total/current/free values; peak and allocation counters are unavailable in this dependency configuration.
+
+Feature `radio-coexistence` consumes unique ESP-HAL `WIFI` and `BT` tokens. `WifiInterfaceMode` requests station, access point, or both; `CoreS3RadioParts` returns only those interfaces plus the Wi-Fi controller and BLE connector. Upstream coexistence is enabled, but the BSP does not start/connect/reconnect Wi-Fi, provide credentials, create an IP stack or sockets, start a BLE host/protocol runtime, or size host pools. Applications own those policies and must not log credentials, endpoint addresses, advertisements, received payloads, or other secrets.
+
+The compatible dependency family is `esp-hal 1.2.2`, `esp-rtos 0.4.0`, `esp-radio 1.0.0-beta.1`, `esp-radio-rtos-driver 0.4.2`, `esp-alloc 0.11.0`, `esp-rom-sys 0.1.5`, `embassy-time-queue-utils 0.3.2`, `embassy-executor 0.10`, `embassy-time 0.5.1`, `embedded-io-async 0.7`, and `static_cell 2.1.1`. The default host MSRV remains workspace Rust 1.88 and is tested with stable 1.98. The ESP family requires Rust 1.95 or newer and is tested with the `esp` 1.97 nightly toolchain. There is no `rtos-task` feature alias because it was never published.
+
+`examples/radio_coexistence` uses build-time `option_env!` values `RADIO_WIFI_SSID`, `RADIO_WIFI_PASSWORD`, `RADIO_ECHO_IPV4`, and `RADIO_ECHO_PORT`. `examples/radio_h2_coexistence` additionally accepts `RADIO_BLE_SCAN=1`; it initializes the internal heap/runtime, probes SD before LCD, starts the independent H2 UART pump/Spinel discovery, and exercises Wi-Fi/BLE work on the one primary executor. An empty password explicitly selects an open AP. Missing optional values skip their tests. Values are withheld from logs but embedded in the firmware binary, so artifacts are sensitive.
+
+`esp-radio 1.0.0-beta.1` is the latest published staged baseline. The requested `https://docs.rs/esp-radio/1.0.0-beta.2/esp_radio/` URL is currently unpublished/404; beta.2 is not an available or tested dependency.
+
+The combined harness runs three radio iterations and thirty LCD updates with non-destructive sector-zero reads; SD write/readback/restore is explicitly **NOT RUN**. Scanning does not validate real BLE GATT/L2CAP exchanges. Spinel discovery does not validate Thread traffic. Blocking LCD/SD operations can delay H2 pump servicing and async deadlines; finite iterations are not hard wall-clock bounds. Separate application-owned instrumentation and external peers are needed for load, recovery, and soak gates.
+
 ## Gateway H2 OpenThread transport
 
 The `gateway-h2` feature exposes protocol-neutral metadata/codecs and a statically buffered async UART byte stream for stock ESP32-H2 OpenThread RCP firmware. The hardware-validated stacked Module Gateway H2 v0.4 route is UART1 TX GPIO17 -> H2 RXD and RX GPIO10 <- H2 TXD, 460800 baud, 8-N-1, without hardware flow control when using the ESP-IDF v5.5.2 `examples/openthread/ot_rcp` image. GPIO7 drives active-low EN/reset and GPIO18 drives H2 GPIO9/BOOT. GPIO9 is pulled high for normal execution and must be low before EN rises to request ROM download mode.
 
 `CoreS3::init_gateway_h2_openthread(...)` returns safe control, a transport implementing `embedded_io_async 0.7::Read + Write`, and a pump future. The pump exclusively owns the HAL UART and must run independently to continuously drain RX into caller-owned static storage. The BSP does not include `openthread`, `rs-matter`, datasets, commissioning, networking, or application orchestration.
 
-Module Gateway H2 v0.4 UART-only operation requires all eight S1 switches OFF; S1-4 is unused. Software records an expected routing but cannot detect physical switch positions. Product material describes optional SPI/PTA routing, but Gateway H2 SPI remains unsupported until authoritative route and switch documentation, a concrete SPI-capable H2 firmware/protocol, integration with the BSP-owned LCD/TF shared-SPI arbiter, and real bidirectional hardware validation are all available. PTA remains application-owned and opt-in; GPIO0 `WL_ACTIVE` conflicts with I2S MCLK.
+Module Gateway H2 v0.4 UART-only operation requires all eight S1 switches OFF; S1-4 is unused. Software records an expected routing but cannot detect physical switch positions. The H2 UART/EN/BOOT path composes with S3 Wi-Fi/BLE controller ownership, but remains a separately serviced framed transport; reserve GPIO17/GPIO10/GPIO7/GPIO18 for H2 control and transport. Product material describes optional SPI/PTA routing, but Gateway H2 SPI remains unsupported until authoritative route and switch documentation, a concrete SPI-capable H2 firmware/protocol, integration with the BSP-owned LCD/TF shared-SPI arbiter, and real bidirectional hardware validation are all available. PTA remains application-owned and opt-in; GPIO0 `WL_ACTIVE` conflicts with I2S MCLK.
 
 ## Validation checklist
+
+The staged v0.5.6 RTOS/radio work has not been run or validated on hardware. Do not infer coexistence, dual-core stability, reset recovery, load, or soak results, and do not publish, merge, or tag v0.5.6 until [`v0.5.6-hardware-validation.md`](v0.5.6-hardware-validation.md) is completed with passing evidence.
 
 - Confirm LCD controller init sequence and color order on hardware.
 - Confirm backlight/reset control path through AXP2101/AW9523B.
