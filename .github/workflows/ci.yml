@@ -21,6 +21,7 @@ jobs:
       - name: Install ESP Rust toolchain
         uses: esp-rs/xtensa-toolchain@v1.6
         with:
+          version: "1.97.0.0"
           default: true
           buildtargets: esp32s3
           ldproxy: false
