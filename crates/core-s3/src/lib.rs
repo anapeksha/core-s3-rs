@@ -19,6 +19,8 @@ pub mod motion;
 pub mod pins;
 pub mod power;
 pub mod rtc;
+#[cfg(feature = "rtos")]
+pub mod rtos;
 pub mod sd;
 pub mod touch;
 pub mod ui;
