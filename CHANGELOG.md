@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Staged opt-in `rtos` support with one BSP-owned `esp-rtos` startup, one primary Embassy executor, safe caller-static internal heap registration, and an optional synchronous CPU1 worker with a static bootstrap stack.
+- Staged opt-in `radio-coexistence` ownership of unique Wi-Fi/BLE tokens, station/AP interface modes, controller initialization, and upstream coexistence while leaving credentials, IP, BLE host, and connection policy to applications.
+- Added dual-core, radio, and radio-plus-Gateway-H2 validation examples, including SD-before-LCD composition and secret-safe build-time configuration.
+- Staged v0.5.6 dependency matrix: `esp-hal 1.2.2`, `esp-rtos 0.4.0`, `esp-radio 1.0.0-beta.1` (latest published), `esp-radio-rtos-driver 0.4.2`, `esp-alloc 0.11.0`, `esp-rom-sys 0.1.5`, `embassy-executor 0.10`, `embassy-time 0.5.1`, `embassy-time-queue-utils 0.3.2`, `static_cell 2.1.1`, and `embedded-io-async 0.7`. The requested beta.2 docs URL is currently unpublished/404; no beta.2 use or validation is claimed.
+- Retained default/host MSRV 1.88, tested stable 1.98; ESP dependencies require Rust >=1.95 and are tested with esp nightly 1.97. No `rtos-task` alias exists.
+- Documented one primary CPU0 executor/time driver, optional synchronous CPU1 worker with permanently owned static stack, and private static heap registration through one audited unsafe boundary; no per-task stack/priority/high-water or second-executor promises.
+- Recorded partial combined-harness limitations: BLE scans are not GATT/L2CAP peer exchanges, Spinel discovery is not Thread traffic, and SD reads are non-destructive with write/readback/restore NOT RUN. Blocking LCD/SD calls can delay async work.
+- Added a fillable hardware record for power-removal/reset, dual-core, request load, real BLE peer exchanges, H2 framing/noise recovery, LCD/SD, memory ownership, and two-hour coexistence gates. All hardware gates are pending: do not publish, merge, or tag v0.5.6 until passing evidence and sign-off are complete. This remains Unreleased; no Matter validation is claimed.
+
 ## [0.5.5] - 2026-10-12
 
 - Corrected the hardware-validated Module Gateway H2 v0.4 UART route to CoreS3 TX GPIO17 and RX GPIO10, retaining GPIO7 EN/reset and GPIO18 GPIO9/BOOT ownership.

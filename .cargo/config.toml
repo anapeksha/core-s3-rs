@@ -2,7 +2,7 @@
 flash = "embed --chip esp32s3 --target xtensa-esp32s3-none-elf"
 
 [unstable]
-build-std = ["core"]
+build-std = ["core", "alloc"]
 
 [target.xtensa-esp32s3-none-elf]
 runner = "cargo embed --chip esp32s3 --path"

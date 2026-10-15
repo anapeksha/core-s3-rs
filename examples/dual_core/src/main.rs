@@ -1,12 +1,17 @@
 #![no_std]
 #![no_main]
 
-use core::{
-    fmt::Write,
-    sync::atomic::{AtomicU32, Ordering},
-};
+use core::{fmt::Write, future::pending};
 
-use core_s3::{CoreS3, bsp::CoreS3DisplayResources};
+use core_s3::{
+    CoreS3,
+    bsp::{CoreS3Display, CoreS3DisplayResources},
+    rtos::{CoreS3Runtime, Cpu1WorkerStack, PrimaryExecutorStorage, RuntimeConfig},
+};
+use embassy_sync::{
+    blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal,
+};
+use embassy_time::{Duration, Ticker, with_timeout};
 use embedded_graphics::{
     mono_font::{MonoTextStyle, ascii::FONT_6X10},
     pixelcolor::Rgb565,
@@ -15,15 +20,13 @@ use embedded_graphics::{
     text::{Alignment, Text},
 };
 use esp_backtrace as _;
-use esp_hal::{
-    system::{CpuControl, Stack},
-    time::Duration,
-};
+use esp_hal::timer::timg::TimerGroup;
 use heapless::String;
-use static_cell::StaticCell;
-
-static APP_CORE_STACK: StaticCell<Stack<8192>> = StaticCell::new();
-static APP_CORE_TICKS: AtomicU32 = AtomicU32::new(0);
+const ITERATIONS: u32 = 16;
+static WORKER_STACK: Cpu1WorkerStack<8192> = Cpu1WorkerStack::new();
+static EXECUTOR: PrimaryExecutorStorage = PrimaryExecutorStorage::new();
+static MESSAGES: Channel<CriticalSectionRawMutex, u32, 4> = Channel::new();
+static DONE: Signal<CriticalSectionRawMutex, u32> = Signal::new();
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -60,14 +63,14 @@ fn main() -> ! {
 
     let small = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
     let accent = MonoTextStyle::new(&FONT_6X10, Rgb565::MAGENTA);
-    Text::new("Core 0: redraws the display", Point::new(34, 96), small)
+    Text::new("Core 0: Embassy + display", Point::new(34, 96), small)
         .draw(&mut parts.display)
         .expect("draw core 0 status");
-    Text::new("Core 1: increments a counter", Point::new(34, 112), small)
+    Text::new("Core 1: blocking worker", Point::new(34, 112), small)
         .draw(&mut parts.display)
         .expect("draw core 1 status");
     Text::new(
-        "Core 0 changes 2/sec; Core 1 4/sec.",
+        "16 bounded cross-core messages",
         Point::new(34, 188),
         accent,
     )
@@ -76,20 +79,26 @@ fn main() -> ! {
 
     draw_counters(&mut parts.display, 0, 0);
 
-    let delay = esp_hal::delay::Delay::new();
-    let mut cpu_control = CpuControl::new(peripherals.CPU_CTRL);
-    let app_core_stack = APP_CORE_STACK.init(Stack::new());
-    let _app_core_guard = cpu_control
-        .start_app_core(app_core_stack, || app_core_task())
-        .expect("start ESP32-S3 app core");
-
-    let mut pro_frames = 0u32;
-    loop {
-        delay.delay(Duration::from_millis(500));
-        pro_frames = pro_frames.wrapping_add(1);
-        let app_ticks = APP_CORE_TICKS.load(Ordering::Relaxed);
-        esp_println::println!("PRO frames={pro_frames}; APP ticks={app_ticks}");
-        draw_counters(&mut parts.display, pro_frames, app_ticks);
+    let timers = TimerGroup::new(peripherals.TIMG0);
+    let runtime = CoreS3Runtime::start(
+        RuntimeConfig::default(),
+        timers.timer0,
+        peripherals.FROM_CPU_INTR0,
+    )
+    .expect("start CoreS3 runtime");
+    runtime
+        .start_worker(
+            peripherals.CPU_CTRL,
+            peripherals.FROM_CPU_INTR1,
+            &WORKER_STACK,
+            app_core_task,
+        )
+        .expect("start CPU1 worker");
+    match runtime.run(&EXECUTOR, move |spawner| {
+        spawner.spawn(primary_task(parts.display).expect("spawn primary task"));
+    }) {
+        Ok(never) => match never {},
+        Err(error) => panic!("primary executor: {error:?}"),
     }
 }
 
@@ -126,11 +135,45 @@ where
         .ok();
 }
 
-fn app_core_task() -> ! {
+fn app_core_task() {
     let delay = esp_hal::delay::Delay::new();
-
-    loop {
-        delay.delay(Duration::from_millis(250));
-        APP_CORE_TICKS.fetch_add(1, Ordering::Relaxed);
+    let mut sent = 0;
+    for sequence in 1..=ITERATIONS {
+        delay.delay(esp_hal::time::Duration::from_millis(250));
+        if MESSAGES.try_send(sequence).is_ok() {
+            sent += 1;
+        }
     }
+    DONE.signal(sent);
+}
+
+#[embassy_executor::task]
+async fn primary_task(mut display: CoreS3Display) {
+    let mut ticker = Ticker::every(Duration::from_millis(100));
+    let mut received = 0;
+    let mut ordered = true;
+    for expected in 1..=ITERATIONS {
+        ticker.next().await;
+        match with_timeout(Duration::from_secs(2), MESSAGES.receive()).await {
+            Ok(sequence) => {
+                received += 1;
+                ordered &= sequence == expected;
+                draw_counters(&mut display, expected, sequence);
+                esp_println::println!("CPU0 periodic work={expected}; CPU1 message={sequence}");
+            }
+            Err(_) => break,
+        }
+    }
+    let completed = with_timeout(Duration::from_secs(6), DONE.wait()).await;
+    let passed = ordered && received == ITERATIONS && completed == Ok(ITERATIONS);
+    let result = if passed { "PASS" } else { "FAIL" };
+    esp_println::println!("Dual-core {result}: received={received}, worker sent={completed:?}");
+    Text::new(
+        result,
+        Point::new(140, 216),
+        MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE),
+    )
+    .draw(&mut display)
+    .ok();
+    pending::<()>().await;
 }
